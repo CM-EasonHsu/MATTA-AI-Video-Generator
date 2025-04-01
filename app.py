@@ -135,7 +135,50 @@ def generate_prompt_with_gemini(text, image_url):
         import traceback
         st.error(f"Detailed error: {traceback.format_exc()}")
         return None
+# 調用 Veo2 API 生成影片
+def generate_video_with_veo2(prompt):
+    try:
+        veo2_api_key = os.environ.get("VEO2_API_KEY")
+        veo2_api_url = "https://api.veo2.com/v1/generate"  # 請替換為實際的 Veo2 API 端點
+        
+        headers = {
+            "Authorization": f"Bearer {veo2_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "prompt": prompt,
+            "format": "mp4",
+            "duration": 15  # 假設默認生成 15 秒的影片
+        }
+        
+        response = requests.post(veo2_api_url, headers=headers, json=payload)
+        response.raise_for_status()
+        
+        return response.json()
+    except Exception as e:
+        st.error(f"調用 Veo2 API 時出錯: {e}")
+        return None
 
+# 檢查影片生成狀態
+def check_video_status(job_id):
+    try:
+        veo2_api_key = os.environ.get("VEO2_API_KEY")
+        veo2_status_url = f"https://api.veo2.com/v1/status/{job_id}"  # 請替換為實際的 Veo2 API 端點
+        
+        headers = {
+            "Authorization": f"Bearer {veo2_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.get(veo2_status_url, headers=headers)
+        response.raise_for_status()
+        
+        return response.json()
+    except Exception as e:
+        st.error(f"檢查影片狀態時出錯: {e}")
+        return None
+    
 # Main application
 def main():
     st.title("AI Video Generator")

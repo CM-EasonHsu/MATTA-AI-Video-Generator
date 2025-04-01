@@ -1,61 +1,61 @@
-# AI 影片生成器
+# AI Video Generator
 
-這是一個使用 Streamlit 構建的應用程式，允許使用者上傳圖片和輸入文字，透過 Gemini AI 處理後送入 Veo2 API 生成專業影片。
+A Streamlit-based application that allows users to upload images and input text, which are processed by Gemini AI and sent to the Veo2 API to generate professional videos.
 
-## 功能
+## Features
 
-- 上傳圖片到 Google Cloud Storage
-- 輸入文字描述
-- 使用 Google Gemini 生成增強的 prompt
-- 調用 Veo2 API 生成影片
-- 實時顯示影片生成進度
-- 播放和下載生成的影片
+- Upload images to Google Cloud Storage
+- Input text descriptions
+- Generate enhanced prompts using Google Gemini
+- Generate videos using Veo2 API
+- Real-time video generation progress display
+- Play and download generated videos
 
-## 前置需求
+## Prerequisites
 
-- Google Cloud Platform 帳號
+- Google Cloud Platform account
 - Google Cloud Storage bucket
-- Gemini API 金鑰
-- Veo2 API 金鑰
+- Gemini API key
+- Veo2 API key
 
-## 本地開發
+## Local Development
 
-1. 克隆此儲存庫：
+1. Clone this repository:
    ```
    git clone <repository-url>
    cd <repository-directory>
    ```
 
-2. 創建並激活虛擬環境：
+2. Create and activate virtual environment:
    ```
    python -m venv venv
-   source venv/bin/activate  # 在 Windows 上使用 venv\Scripts\activate
+   source venv/bin/activate  # On Windows use venv\Scripts\activate
    ```
 
-3. 安裝依賴：
+3. Install dependencies:
    ```
    pip install -r requirements.txt
    ```
 
-4. 創建 `.env` 文件並設置環境變數（參考 `.env.example`）：
+4. Create `.env` file and set environment variables (refer to `.env.example`):
    ```
    cp .env.example .env
-   # 編輯 .env 文件填入您的實際配置
+   # Edit .env file with your actual configurations
    ```
 
-5. 運行應用程式：
+5. Run the application:
    ```
    streamlit run app.py
    ```
 
-## 使用 Docker 運行
+## Running with Docker
 
-1. 構建 Docker 映像：
+1. Build Docker image:
    ```
    docker build -t ai-video-generator .
    ```
 
-2. 運行容器：
+2. Run container:
    ```
    docker run -p 8080:8080 \
      -e GCS_BUCKET_NAME=your-bucket-name \
@@ -64,20 +64,20 @@
      ai-video-generator
    ```
 
-## 部署到 Google Cloud Run
+## Deploy to Google Cloud Run
 
-1. 確保已安裝並配置 Google Cloud CLI：
+1. Ensure Google Cloud CLI is installed and configured:
    ```
    gcloud auth login
    gcloud config set project your-project-id
    ```
 
-2. 構建並推送 Docker 映像到 Google Container Registry：
+2. Build and push Docker image to Google Container Registry:
    ```
    gcloud builds submit --tag gcr.io/your-project-id/ai-video-generator
    ```
 
-3. 部署到 Cloud Run：
+3. Deploy to Cloud Run:
    ```
    gcloud run deploy ai-video-generator \
      --image gcr.io/your-project-id/ai-video-generator \
@@ -87,20 +87,20 @@
      --set-env-vars="GCS_BUCKET_NAME=your-bucket-name,GEMINI_API_KEY=your-gemini-api-key,VEO2_API_KEY=your-veo2-api-key"
    ```
 
-## 使用說明
+## Usage Instructions
 
-1. 開啟應用程式後，在側邊欄輸入您的 GCS Bucket 名稱（如果未通過環境變數設置）
-2. 上傳一張圖片
-3. 輸入描述文字
-4. 點擊「生成影片」按鈕
-5. 等待處理完成，查看生成的影片
+1. After opening the application, enter your GCS Bucket name in the sidebar (if not set via environment variables)
+2. Upload an image
+3. Enter descriptive text
+4. Click the "Generate Video" button
+5. Wait for processing to complete and view the generated video
 
-## 注意事項
+## Important Notes
 
-- 確保您的 GCS Bucket 已正確配置權限
-- Gemini API 和 Veo2 API 可能需要付費使用
-- 影片生成可能需要一些時間，請耐心等待
+- Ensure your GCS Bucket has proper permissions configured
+- Gemini API and Veo2 API may require paid subscriptions
+- Video generation may take some time, please be patient
 
-## 授權
+## License
 
 [MIT License](LICENSE)

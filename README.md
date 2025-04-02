@@ -10,6 +10,9 @@ A Streamlit-based application that allows users to upload images and input text,
 - Generate videos using Veo2 API
 - Real-time video generation progress display
 - Play and download generated videos
+- Gallery page to browse all generated videos
+- Queue system for managing multiple video generation requests
+- Background processing of video generation tasks
 
 ## Prerequisites
 
@@ -89,17 +92,34 @@ A Streamlit-based application that allows users to upload images and input text,
 
 ## Usage Instructions
 
+### Generate Video Page
 1. After opening the application, enter your GCS Bucket name in the sidebar (if not set via environment variables)
 2. Upload an image
 3. Enter descriptive text
 4. Click the "Generate Video" button
-5. Wait for processing to complete and view the generated video
+5. Your request will be added to the queue for processing
+6. You'll receive a task ID and queue position
+
+### Gallery Page
+1. Navigate to the Gallery page using the sidebar
+2. Browse all generated videos in a grid layout
+3. View video details by expanding the Details section
+4. Watch completed videos directly in the browser
+
+### Queue Status Page
+1. Navigate to the Queue Status page using the sidebar
+2. View all pending tasks in the queue
+3. Check the status of recently processed videos
+4. Monitor your task's position in the queue
 
 ## Important Notes
 
 - Ensure your GCS Bucket has proper permissions configured
 - Gemini API and Veo2 API may require paid subscriptions
 - Video generation may take some time, please be patient
+- The queue system processes one task at a time in the background
+- Video metadata and queue information are stored in the 'data' directory
+- The background worker thread runs as long as the application is active
 
 ## License
 

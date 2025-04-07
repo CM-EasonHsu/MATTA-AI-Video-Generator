@@ -1,0 +1,11 @@
+fastapi==0.115.12
+uvicorn==0.34.0
+pydantic-settings==2.8.1
+asyncpg==0.30.0
+google-cloud-storage==3.1.0
+google-cloud-pubsub==2.29.0
+shortuuid==1.0.13
+python-multipart==0.0.20
+python-dotenv==1.1.0
+httpx==0.28.1
+cloud-sql-python-connector[asyncpg]==1.18.0

@@ -52,3 +52,11 @@ The script will perform the following actions:
 * Deploy the worker function to Cloud Functions (Gen 2) using source code from the `./backend` directory, triggering it from the Pub/Sub topic, and connecting it to Cloud SQL and Secret Manager.
 * Update the Cloud Function's underlying Cloud Run service to add the Cloud SQL connection.
 * Deploy both Streamlit application to Cloud Run using source code from the `./streamlit_submission` and `streamlit_moderation` directories respectively.
+
+## Initialize database
+After the Cloud SQL instance, database and user are created, proceed to run the initialization script `init-db.sql`. This can be done via the Cloud SQL Studio in the GCP console. Copy the content of the script into the editor and execute the commands accordingly. The script covers the following actions:
+
+* Create the ENUM type for submission statuses
+* Create the main table for tracking submissions
+* Create Indexes for efficient querying
+* Create Trigger function to automatically update updated_at timestamp

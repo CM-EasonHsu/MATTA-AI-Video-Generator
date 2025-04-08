@@ -1,48 +1,347 @@
 #!/bin/bash
 
-# 確保腳本在錯誤時停止
+# Exit immediately if a command exits with a non-zero status.
 set -e
+# Treat unset variables as an error when substituting.
+set -u
+# Pipelines return the exit status of the last command to exit with a non-zero status,
+# or zero if no command exited with a non-zero status.
+set -o pipefail
 
-# 讀取環境變數
-if [ -f .env ]; then
-  export $(cat .env | grep -v '#' | awk '/=/ {print $1}')
+# --- Configuration - CHANGE THESE VALUES ---
+# It's recommended to set PROJECT_ID explicitly, although the script tries to fetch it.
+# Ensure DB_PASSWORD is set to a strong value before running.
+export PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project)}" # Use existing env var or fetch
+export REGION="asia-southeast1"
+
+# Cloud SQL
+export SQL_INSTANCE_NAME="videogen-postgres"
+export DB_NAME="videogen_db"
+export DB_USER="videogen_user"
+export DB_PASSWORD="videogen_pw" # <<< CHANGE THIS TO A STRONG PASSWORD
+
+# GCS
+export GCS_BUCKET_NAME="matta-videogen-storage"
+
+# Secret Manager
+export DB_PASS_SECRET_NAME="videogen-db-password"
+
+# Cloud Run
+export CLOUD_RUN_SERVICE_NAME="videogen-backend-api"
+
+# Pub/Sub
+export PUB_SUB_TOPIC_ID="approved-submissions"
+
+# Cloud Function
+export CLOUD_FUNCTION_NAME="videogen-worker"
+
+# Service account
+export SA_NAME="videogen-sa"
+# --- End Configuration ---
+
+# --- Derived Variables ---
+export SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+# ---
+
+# --- Helper Functions ---
+
+# Function to print messages
+log() {
+  echo "--------------------------------------------------"
+  echo "$1"
+  echo "--------------------------------------------------"
+}
+
+# Function to check for command existence
+check_command() {
+  if ! command -v "$1" &> /dev/null; then
+    echo "Error: command '$1' not found. Please install it." >&2
+    exit 1
+  fi
+}
+
+# --- Main Script ---
+
+log "Starting GCP Video Generation Infrastructure Deployment"
+
+# --- Prerequisites Check ---
+log "Checking prerequisites..."
+check_command "gcloud"
+
+if [ -z "${PROJECT_ID}" ]; then
+    echo "Error: PROJECT_ID is not set. Please configure it at the top of the script or ensure 'gcloud config get-value project' works." >&2
+    exit 1
 fi
 
-# 檢查必要的環境變數
-if [ -z "$GCS_BUCKET_NAME" ] || [ -z "$GEMINI_API_KEY" ] || [ -z "$VEO2_API_KEY" ]; then
-  echo "錯誤: 缺少必要的環境變數。請確保 .env 文件中包含 GCS_BUCKET_NAME, GEMINI_API_KEY 和 VEO2_API_KEY。"
-  exit 1
+if [ -z "${DB_PASSWORD}" ]; then
+    echo "Error: DB_PASSWORD is not set. Please configure it at the top of the script." >&2
+    exit 1
 fi
 
-# 設置 Google Cloud 項目 ID
-if [ -z "$GOOGLE_CLOUD_PROJECT" ]; then
-  echo "請輸入您的 Google Cloud 項目 ID:"
-  read GOOGLE_CLOUD_PROJECT
+if [ ! -d "./backend" ]; then
+    echo "Error: ./backend directory not found. Ensure your backend source code is present." >&2
+    exit 1
 fi
 
-# 設置應用程式名稱
-APP_NAME="ai-video-generator"
+if [ ! -f "./env.yaml" ]; then
+    echo "Warning: ./env.yaml file not found. Cloud Run and Cloud Functions deployments might fail if they require it." >&2
+    # Consider adding 'exit 1' here if env.yaml is strictly required for deployment to succeed.
+fi
 
-# 設置區域
-REGION="asia-east1"  # 可以根據需要更改
+echo "Using Project ID: ${PROJECT_ID}"
+echo "Using Region: ${REGION}"
+echo "Service Account Email: ${SA_EMAIL}"
+echo "Prerequisites seem satisfied."
 
-echo "開始部署 $APP_NAME 到 Google Cloud Run..."
+# --- Enable APIs ---
+log "Enabling necessary GCP APIs..."
+gcloud services enable \
+  sqladmin.googleapis.com \
+  secretmanager.googleapis.com \
+  run.googleapis.com \
+  cloudbuild.googleapis.com \
+  pubsub.googleapis.com \
+  cloudfunctions.googleapis.com \
+  iam.googleapis.com \
+  artifactregistry.googleapis.com \
+  cloudresourcemanager.googleapis.com \
+  eventarc.googleapis.com \
+  --project="${PROJECT_ID}"
+echo "APIs enabled."
 
-# 構建並推送 Docker 映像
-echo "構建並推送 Docker 映像..."
-gcloud builds submit --tag gcr.io/$GOOGLE_CLOUD_PROJECT/$APP_NAME
+# --- Create GCS Bucket ---
+log "Creating GCS bucket ${GCS_BUCKET_NAME}..."
+# Use || true to prevent script exit if bucket already exists
+if ! gsutil ls -b "gs://${GCS_BUCKET_NAME}" &> /dev/null; then
+  gsutil mb -p "${PROJECT_ID}" -l "${REGION}" "gs://${GCS_BUCKET_NAME}"
+  echo "GCS bucket ${GCS_BUCKET_NAME} created."
+else
+  echo "GCS bucket ${GCS_BUCKET_NAME} already exists."
+fi
 
-# 部署到 Cloud Run
-echo "部署到 Cloud Run..."
-gcloud run deploy $APP_NAME \
-  --image gcr.io/$GOOGLE_CLOUD_PROJECT/$APP_NAME \
-  --platform managed \
-  --region $REGION \
-  --allow-unauthenticated \
-  --set-env-vars="GCS_BUCKET_NAME=$GCS_BUCKET_NAME,GEMINI_API_KEY=$GEMINI_API_KEY,VEO2_API_KEY=$VEO2_API_KEY"
+# --- Create Cloud SQL Instance ---
+log "Creating Cloud SQL instance ${SQL_INSTANCE_NAME}..."
+# Check if instance exists first to avoid long wait on 'create' if it already exists
+if ! gcloud sql instances describe "${SQL_INSTANCE_NAME}" --project="${PROJECT_ID}" &> /dev/null; then
+  gcloud sql instances create "${SQL_INSTANCE_NAME}" \
+    --database-version=POSTGRES_17 \
+    --tier=db-f1-micro \
+    --region="${REGION}" \
+    --edition=ENTERPRISE \
+    --project="${PROJECT_ID}"
+  echo "Cloud SQL instance creation initiated. This may take several minutes."
+  # Note: We are not waiting for the instance to be fully RUNNABLE here,
+  # subsequent steps might fail if they depend on it immediately.
+  # However, `gcloud run deploy` often handles waiting.
+else
+  echo "Cloud SQL instance ${SQL_INSTANCE_NAME} already exists."
+fi
 
-# 獲取部署的 URL
-SERVICE_URL=$(gcloud run services describe $APP_NAME --platform managed --region $REGION --format 'value(status.url)')
+log "Creating database ${DB_NAME}..."
+# Use || true to prevent script exit if db already exists
+gcloud sql databases create "${DB_NAME}" --instance="${SQL_INSTANCE_NAME}" --project="${PROJECT_ID}" --quiet || true
+echo "Database ${DB_NAME} ensured."
 
-echo "部署完成！"
-echo "您的應用程式已部署到: $SERVICE_URL"
+log "Creating database user ${DB_USER}..."
+# Check if user exists. If so, update password. If not, create.
+if gcloud sql users list --instance="${SQL_INSTANCE_NAME}" --project="${PROJECT_ID}" --format="value(name)" | grep -q "^${DB_USER}$"; then
+  echo "Database user ${DB_USER} already exists. Setting password..."
+  gcloud sql users set-password "${DB_USER}" \
+    --instance="${SQL_INSTANCE_NAME}" \
+    --password="${DB_PASSWORD}" \
+    --project="${PROJECT_ID}" \
+    --host=% # Use % for any host, adjust if needed
+else
+  echo "Creating database user ${DB_USER}..."
+  gcloud sql users create "${DB_USER}" \
+    --instance="${SQL_INSTANCE_NAME}" \
+    --password="${DB_PASSWORD}" \
+    --project="${PROJECT_ID}" \
+    --host=% # Use % for any host, adjust if needed
+fi
+echo "Database user ${DB_USER} ensured."
+
+
+log "Fetching instance connection name..."
+# This might fail if the instance isn't ready yet after creation.
+# Retry logic could be added here if needed.
+export INSTANCE_CONNECTION_NAME=$(gcloud sql instances describe "${SQL_INSTANCE_NAME}" --project="${PROJECT_ID}" --format='value(connectionName)')
+if [ -z "${INSTANCE_CONNECTION_NAME}" ]; then
+    echo "Error: Failed to get INSTANCE_CONNECTION_NAME. Is the SQL instance ready?" >&2
+    exit 1
+fi
+echo "Instance Connection Name: ${INSTANCE_CONNECTION_NAME}"
+echo "Important: Ensure DB_INSTANCE_CONNECTION_NAME in env.yaml matches this value if your application code requires it."
+
+
+# --- Create Secrets ---
+log "Creating secret ${DB_PASS_SECRET_NAME} in Secret Manager..."
+# Use || true to prevent script exit if secret already exists
+gcloud secrets create "${DB_PASS_SECRET_NAME}" \
+    --replication-policy=automatic \
+    --project="${PROJECT_ID}" \
+    --quiet || true
+echo "Secret ${DB_PASS_SECRET_NAME} ensured."
+
+log "Adding database password as secret version..."
+# Add the password to the secret
+echo -n "${DB_PASSWORD}" | gcloud secrets versions add "${DB_PASS_SECRET_NAME}" --data-file=- --project="${PROJECT_ID}"
+
+# Clear the password variable from the environment immediately after use
+unset DB_PASSWORD
+echo "Password stored in Secret Manager and variable unset."
+
+
+# --- Create Service Account ---
+log "Creating Service Account ${SA_NAME}..."
+# Use || true to prevent script exit if SA already exists
+gcloud iam service-accounts create "${SA_NAME}" \
+  --display-name="Video Generator Service Account" \
+  --project="${PROJECT_ID}" \
+  --quiet || true
+echo "Service Account ${SA_EMAIL} ensured."
+
+
+# --- Grant IAM Permissions ---
+log "Granting IAM permissions to ${SA_EMAIL}..."
+
+# Grant Cloud SQL Client role
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/cloudsql.client" \
+  --condition=None --quiet
+
+# Grant Secret Accessor role for the specific secret
+gcloud secrets add-iam-policy-binding "${DB_PASS_SECRET_NAME}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --project="${PROJECT_ID}" \
+  --condition=None --quiet
+
+# Grant Pub/Sub Publisher role
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/pubsub.publisher" \
+  --condition=None --quiet
+
+# Grant Storage Object User role
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/storage.objectUser" \
+  --condition=None --quiet
+
+# Grant Cloud Run Invoker role
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/run.invoker" \
+  --condition=None --quiet
+
+# Grant Service Account Token Creator role (often needed for SA impersonation or inter-service auth)
+gcloud iam service-accounts add-iam-policy-binding \
+    "${SA_EMAIL}" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/iam.serviceAccountTokenCreator" \
+    --project="${PROJECT_ID}" \
+    --quiet
+
+
+echo "Core IAM permissions granted."
+
+
+# --- Create Pub/Sub Topic ---
+log "Creating Pub/Sub topic ${PUB_SUB_TOPIC_ID}..."
+# Use || true to prevent script exit if topic already exists
+gcloud pubsub topics create "${PUB_SUB_TOPIC_ID}" --project="${PROJECT_ID}" --quiet || true
+echo "Pub/Sub topic ${PUB_SUB_TOPIC_ID} ensured."
+
+
+# --- Deploy Cloud Run Service (Backend API) ---
+log "Deploying Cloud Run service ${CLOUD_RUN_SERVICE_NAME}..."
+# Deployment implicitly uses Cloud Build
+gcloud run deploy "${CLOUD_RUN_SERVICE_NAME}" \
+  --source=./backend \
+  --region="${REGION}" \
+  --service-account="${SA_EMAIL}" \
+  --allow-unauthenticated `# Adjust if authentication is needed` \
+  --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}" \
+  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest" \
+  --env-vars-file=env.yaml \
+  --memory=512Mi \
+  --cpu=1 \
+  --project="${PROJECT_ID}" \
+  --quiet # Add --quiet for less verbose output during deployment
+
+BACKEND_URL=$(gcloud run services describe "${CLOUD_RUN_SERVICE_NAME}" --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')
+echo "Cloud Run service deployed. URL: ${BACKEND_URL}"
+
+
+# --- Deploy Cloud Function (Worker) ---
+log "Deploying Cloud Function ${CLOUD_FUNCTION_NAME}..."
+# Deployment implicitly uses Cloud Build
+# Note: --add-cloudsql-instances is not directly supported for --trigger-topic on deploy for Gen2.
+# It needs to be added via 'gcloud run services update' afterwards.
+gcloud functions deploy "${CLOUD_FUNCTION_NAME}" \
+  --gen2 \
+  --region="${REGION}" \
+  --runtime=python311 `# Update runtime if needed` \
+  --source=./backend \
+  --entry-point=entry_point `# Change if your entry point is different` \
+  --trigger-topic="${PUB_SUB_TOPIC_ID}" \
+  --service-account="${SA_EMAIL}" \
+  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest" \
+  --env-vars-file=env.yaml `# Read env vars from yaml` \
+  --timeout=540s \
+  --project="${PROJECT_ID}" \
+  --quiet # Add --quiet for less verbose output during deployment
+echo "Cloud Function deployment initiated."
+
+log "Adding Cloud SQL connection to Cloud Function's underlying service..."
+# Gen2 Functions run on Cloud Run, update the underlying service
+# This command targets the *service* created for the function, which has the same name.
+gcloud run services update "${CLOUD_FUNCTION_NAME}" \
+  --region="${REGION}" \
+  --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}" \
+  --project="${PROJECT_ID}" \
+  --quiet
+echo "Cloud SQL connection added to function's service."
+
+
+log "Deployment script finished successfully!"
+echo "Backend API URL: ${BACKEND_URL}"
+
+
+# --- Deploy Cloud Run Service (Streamlit Submission) ---
+log "Deploying Cloud Run service streamlit-submission..."
+# Deployment implicitly uses Cloud Build
+gcloud run deploy streamlit-submission \
+  --source=./streamlit_submission \
+  --region="${REGION}" \
+  --service-account="${SA_EMAIL}" \
+  --allow-unauthenticated `# Adjust if authentication is needed` \
+  --set-env-vars="BACKEND_API_URL=${BACKEND_URL}" \
+  --port=8501 \
+  --memory=512Mi \
+  --cpu=1 \
+  --project="${PROJECT_ID}" \
+  --quiet # Add --quiet for less verbose output during deployment
+
+SUBMISSION_URL=$(gcloud run services describe streamlit-submission --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')
+echo "Cloud Run service deployed. URL: ${SUBMISSION_URL}"
+
+# --- Deploy Cloud Run Service (Streamlit Moderation) ---
+log "Deploying Cloud Run service streamlit-moderation..."
+# Deployment implicitly uses Cloud Build
+gcloud run deploy streamlit-moderation \
+  --source=./streamlit_moderation \
+  --region="${REGION}" \
+  --service-account="${SA_EMAIL}" \
+  --allow-unauthenticated `# Adjust if authentication is needed` \
+  --set-env-vars="BACKEND_API_URL=${BACKEND_URL}" \
+  --port=8501 \
+  --memory=512Mi \
+  --cpu=1 \
+  --project="${PROJECT_ID}" \
+  --quiet # Add --quiet for less verbose output during deployment
+
+MODERATION_URL=$(gcloud run services describe streamlit-moderation --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')
+echo "Cloud Run service deployed. URL: ${MODERATION_URL}"

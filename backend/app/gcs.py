@@ -1,4 +1,5 @@
 import logging
+import google.auth
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
 from app.config import settings
@@ -58,6 +59,9 @@ async def generate_signed_url(blob_name: str) -> Optional[str]:
         blob_name = blob_name[len(f"gs://{settings.gcs_bucket_name}/") :]
 
     try:
+        credentials, project = google.auth.default()
+        request = google.auth.transport.requests.Request()
+        credentials.refresh(request)
         bucket = storage_client.bucket(settings.gcs_bucket_name)
         blob = bucket.blob(blob_name)
 
@@ -71,6 +75,8 @@ async def generate_signed_url(blob_name: str) -> Optional[str]:
             version="v4",
             expiration=timedelta(seconds=settings.signed_url_expiration_seconds),
             method="GET",
+            service_account_email=settings.SERVICE_ACCOUNT_EMAIL,
+            access_token=credentials.token,
         )
         logger.debug(f"Generated signed URL for {blob_name}")
         return url

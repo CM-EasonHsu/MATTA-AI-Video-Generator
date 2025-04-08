@@ -59,19 +59,29 @@ async def get_submission_by_id(conn: asyncpg.Connection, submission_id: uuid.UUI
 
 
 async def get_submissions_by_status(
-    conn: asyncpg.Connection, statuses: List[SubmissionStatusEnum]
+    conn: asyncpg.Connection, statuses: List[SubmissionStatusEnum], skip: int = 0, limit: int = 50
 ) -> List[asyncpg.Record]:
     """Fetches submissions matching a list of statuses."""
     try:
-        # Convert enum values to strings for the query
         status_values = [s.value for s in statuses]
-        # Use ANY($1::submission_status[]) for array comparison
         query = """
             SELECT * FROM submissions
             WHERE status = ANY($1::submission_status[])
-            ORDER BY created_at ASC;
+            ORDER BY created_at ASC
         """
-        return await conn.fetch(query, status_values)
+        # Append LIMIT and OFFSET
+        params = [status_values]
+        if limit is not None:
+            query += " LIMIT $2"
+            params.append(limit)
+            if skip is not None:
+                query += " OFFSET $3"
+                params.append(skip)
+        elif skip is not None:
+            # If only skip is provided
+            query += " OFFSET $2"
+            params.append(skip)
+        return await conn.fetch(query, *params)
     except Exception as e:
         logger.error(f"Error fetching submissions by status {statuses}: {e}", exc_info=True)
         raise

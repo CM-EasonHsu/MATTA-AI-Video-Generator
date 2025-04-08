@@ -13,6 +13,7 @@ load_dotenv()
 class Settings(BaseSettings):
     GOOGLE_CLOUD_PROJECT: str
     GOOGLE_CLOUD_REGION: str
+    SERVICE_ACCOUNT_EMAIL: str
 
     # Cloud SQL specific settings
     DB_USER: str

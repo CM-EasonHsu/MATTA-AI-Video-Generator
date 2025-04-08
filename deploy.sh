@@ -25,6 +25,7 @@ export GCS_BUCKET_NAME="matta-videogen-storage"
 
 # Secret Manager
 export DB_PASS_SECRET_NAME="videogen-db-password"
+export VEO2_API_KEY_SECRET_NAME="videogen-veo2-api-key"
 
 # Cloud Run
 export CLOUD_RUN_SERVICE_NAME="videogen-backend-api"
@@ -37,6 +38,9 @@ export CLOUD_FUNCTION_NAME="videogen-worker"
 
 # Service account
 export SA_NAME="videogen-sa"
+
+# VEO2 API Key
+export VEO2_API_KEY="veo2_api_key"
 # --- End Configuration ---
 
 # --- Derived Variables ---
@@ -78,8 +82,8 @@ if [ -z "${DB_PASSWORD}" ]; then
     exit 1
 fi
 
-if [ ! -d "./backend" ]; then
-    echo "Error: ./backend directory not found. Ensure your backend source code is present." >&2
+if [ -z "${VEO2_API_KEY}" ]; then
+    echo "Error: VEO2_API_KEY is not set. Please configure it at the top of the script." >&2
     exit 1
 fi
 
@@ -183,12 +187,28 @@ gcloud secrets create "${DB_PASS_SECRET_NAME}" \
     --quiet || true
 echo "Secret ${DB_PASS_SECRET_NAME} ensured."
 
+log "Creating secret ${VEO2_API_KEY_SECRET_NAME} in Secret Manager..."
+# Use || true to prevent script exit if secret already exists
+gcloud secrets create "${VEO2_API_KEY_SECRET_NAME}" \
+    --replication-policy=automatic \
+    --project="${PROJECT_ID}" \
+    --quiet || true
+echo "Secret ${VEO2_API_KEY_SECRET_NAME} ensured."
+
 log "Adding database password as secret version..."
 # Add the password to the secret
 echo -n "${DB_PASSWORD}" | gcloud secrets versions add "${DB_PASS_SECRET_NAME}" --data-file=- --project="${PROJECT_ID}"
 
 # Clear the password variable from the environment immediately after use
 unset DB_PASSWORD
+echo "Password stored in Secret Manager and variable unset."
+
+log "Adding Veo2 API key as secret version..."
+# Add the password to the secret
+echo -n "${VEO2_API_KEY}" | gcloud secrets versions add "${VEO2_API_KEY_SECRET_NAME}" --data-file=- --project="${PROJECT_ID}"
+
+# Clear the password variable from the environment immediately after use
+unset VEO2_API_KEY
 echo "Password stored in Secret Manager and variable unset."
 
 
@@ -213,6 +233,12 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 
 # Grant Secret Accessor role for the specific secret
 gcloud secrets add-iam-policy-binding "${DB_PASS_SECRET_NAME}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --project="${PROJECT_ID}" \
+  --condition=None --quiet
+
+gcloud secrets add-iam-policy-binding "${VEO2_API_KEY_SECRET_NAME}" \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/secretmanager.secretAccessor" \
   --project="${PROJECT_ID}" \
@@ -264,7 +290,7 @@ gcloud run deploy "${CLOUD_RUN_SERVICE_NAME}" \
   --service-account="${SA_EMAIL}" \
   --allow-unauthenticated `# Adjust if authentication is needed` \
   --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}" \
-  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest" \
+  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest,VEO2_API_KEY=${VEO2_API_KEY_SECRET_NAME}:latest" \
   --env-vars-file=env.yaml \
   --memory=512Mi \
   --cpu=1 \
@@ -288,7 +314,7 @@ gcloud functions deploy "${CLOUD_FUNCTION_NAME}" \
   --entry-point=entry_point `# Change if your entry point is different` \
   --trigger-topic="${PUB_SUB_TOPIC_ID}" \
   --service-account="${SA_EMAIL}" \
-  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest" \
+  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest,VEO2_API_KEY=${VEO2_API_KEY_SECRET_NAME}:latest" \
   --env-vars-file=env.yaml `# Read env vars from yaml` \
   --timeout=540s \
   --project="${PROJECT_ID}" \

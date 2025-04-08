@@ -16,6 +16,7 @@ from app.config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("VideoGenerationWorker")
+logger.setLevel(logging.INFO)
 
 # --- Constants ---
 VEO2_INITIATE_ENDPOINT = f"{settings.veo2_api_base_url}/v1/generate"
@@ -74,7 +75,7 @@ async def poll_veo2_job(client: httpx.AsyncClient, job_id: str) -> dict:
             else:
                 data = {
                     "status": "SUCCEEDED",
-                    "output_video_uri": "gs://matta_fair_storage/generated_videos/sample_video.mp4",
+                    "output_video_uri": "gs://matta-videogen-storage/generated_videos/sample_video.mp4",
                 }
             job_status = data.get("status")
 
@@ -225,13 +226,13 @@ def entry_point(event: CloudEvent):
         logger.info(f"Received Pub/Sub message: {data_str}")
         try:
             payload = json.loads(data_str)
-            if isinstance(payload, dict) and "submissionId" in payload:
-                submission_id_str = payload["submissionId"]
+            if isinstance(payload, dict) and "submission_id" in payload:
+                submission_id_str = payload["submission_id"]
         except json.JSONDecodeError:
             logger.warning("Pub/Sub data was not valid JSON.")
 
         if not submission_id_str:
-            logger.error("FATAL: 'submissionId' could not be extracted from Pub/Sub message.")
+            logger.error("FATAL: 'submission_id' could not be extracted from Pub/Sub message.")
             # Acknowledge the message - can't process, no retry needed.
             return
 
@@ -239,7 +240,7 @@ def entry_point(event: CloudEvent):
         try:
             submission_id = uuid.UUID(submission_id_str)
         except ValueError:
-            logger.error(f"FATAL: Invalid UUID format for submissionId: '{submission_id_str}'.")
+            logger.error(f"FATAL: Invalid UUID format for submission_id: '{submission_id_str}'.")
             # Acknowledge the message - invalid format, no retry needed.
             return
 

@@ -1,13 +1,17 @@
 import asyncio
-import httpx
-import logging
 import json
+import logging
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Request, Response
 from typing import List, Optional
-from app import schemas, crud, database
+
+import httpx
 from asyncpg import Connection
-from app.config import settings  # Assuming settings contains Veo2 details, polling config, etc.
+from fastapi import (APIRouter, Body, Depends, HTTPException, Request,
+                     Response, status)
+
+from app import crud, database, schemas
+from app.config import \
+    settings  # Assuming settings contains Veo2 details, polling config, etc.
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/generation", tags=["Generation"])
@@ -15,6 +19,7 @@ router = APIRouter(prefix="/generation", tags=["Generation"])
 
 # --- Constants ---
 VEO2_INITIATE_ENDPOINT = f"{settings.veo2_api_base_url}/v1/generate"
+VEO2_PROMPT_ENDPOINT = f"{settings.veo2_api_base_url}/v1/prompt"
 VEO2_STATUS_ENDPOINT_TEMPLATE = f"{settings.veo2_api_base_url}/v1/jobs/{{job_id}}"
 VEO2_HEADERS = {"Authorization": f"Bearer {settings.veo2_api_key}"} if settings.veo2_api_key else {}
 
@@ -373,3 +378,127 @@ async def generate_video(
     # treat it as an internal error.
     logger.error(f"Reached unexpected end of function for submission {submission_id}")
     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unexpected end of processing.")
+
+
+async def generate_veo2_prompt(client: httpx.AsyncClient, photo_uri: str, description: Optional[str] = None) -> dict:
+    """
+    Generates a video prompt using Veo2's prompt generation API.
+
+    Args:
+        client: An httpx.AsyncClient instance
+        photo_uri: The GCS URI of the photo to generate a prompt for
+        description: Optional description to guide prompt generation
+
+    Returns:
+        dict: The generated prompt data from Veo2
+
+    Raises:
+        httpx.HTTPStatusError: For API errors (4xx/5xx)
+        httpx.RequestError: For network/timeout errors
+        Exception: For other unexpected errors
+    """
+    logger.info(f"Generating Veo2 video prompt for photo: {photo_uri}...")
+    try:
+        payload = {"photo_uri": photo_uri}
+        if description:
+            payload["description"] = description
+
+        # --- Start: Real API call (uncomment when ready) ---
+        # response = await client.post(
+        #     VEO2_PROMPT_ENDPOINT,
+        #     json=payload,
+        #     headers=VEO2_HEADERS,
+        #     timeout=settings.veo2_prompt_timeout_seconds  # Use config
+        # )
+        # response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
+        # prompt_data = response.json()
+        # logger.info(f"Successfully generated Veo2 prompt for photo: {photo_uri}")
+        # return prompt_data
+        # --- End: Real API call ---
+
+        # --- Start: Mock API call (remove when using real API) ---
+        await asyncio.sleep(1)  # Simulate network delay
+        mock_prompt_data = {
+            "prompt": "A beautiful scene with dynamic movement and vibrant colors",
+            "suggestions": [
+                "Add more motion to the scene",
+                "Focus on the central subject",
+                "Enhance the lighting effects"
+            ]
+        }
+        logger.info(f"Mock Veo2 prompt generated successfully for photo: {photo_uri}")
+        return mock_prompt_data
+        # --- End: Mock API call ---
+
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"Veo2 API returned an error during prompt generation: {e.response.status_code} - {e.response.text}",
+            exc_info=True,
+        )
+        raise
+    except httpx.RequestError as e:
+        logger.error(f"HTTP request error during Veo2 prompt generation: {e}", exc_info=True)
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during Veo2 prompt generation: {e}", exc_info=True)
+        raise
+
+
+@router.post(
+    "/prompt",
+    summary="Generate a video prompt using Veo2",
+    response_model=schemas.VideoPromptResponse,
+)
+async def generate_video_prompt(
+    request_data: schemas.VideoPromptRequest = Body(...),
+):
+    """
+    Generates a video prompt using Veo2's prompt generation API.
+    This is a synchronous endpoint that returns the generated prompt directly.
+
+    Args:
+        request_data: The request data containing the photo URI and optional description
+
+    Returns:
+        schemas.VideoPromptResponse: The generated prompt data
+
+    Raises:
+        HTTPException: For various error conditions
+    """
+    photo_uri = request_data.photo_uri
+    description = request_data.description
+
+    logger.info(f"Received request to generate video prompt for photo: {photo_uri}")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            prompt_data = await generate_veo2_prompt(client, photo_uri, description)
+
+            return schemas.VideoPromptResponse(
+                prompt=prompt_data.get("prompt", ""),
+                suggestions=prompt_data.get("suggestions", []),
+            )
+
+    except httpx.HTTPStatusError as e:
+        error_detail = f"Veo2 API error: {e.response.status_code} - {e.response.text}"
+        logger.error(error_detail)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=error_detail,
+        )
+
+    except httpx.RequestError as e:
+        error_detail = f"Network error communicating with Veo2: {e}"
+        logger.error(error_detail)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=error_detail,
+        )
+
+    except Exception as e:
+        error_detail = f"Unexpected error generating video prompt: {e}"
+        logger.error(error_detail, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=error_detail,
+        )

@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     veo2_api_key: str = None
     polling_interval_seconds: int = 15
     max_polling_attempts: int = 80
+    veo2_initiate_timeout_seconds: int = 30
+    veo2_poll_timeout_seconds: int = 30
+    veo2_prompt_timeout_seconds: int = 30
 
     class Config:
         # If using .env file, pydantic-settings will load it automatically

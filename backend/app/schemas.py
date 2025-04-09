@@ -1,5 +1,5 @@
 import uuid
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 from typing import Optional, List
 from enum import Enum
 from datetime import datetime
@@ -59,3 +59,19 @@ class ModerationDecisionEnum(str, Enum):
 
 class ModerationAction(BaseModel):
     decision: ModerationDecisionEnum
+
+
+class VideoPromptRequest(BaseModel):
+    """
+    Request model for generating a video prompt using Veo2.
+    """
+    photo_uri: str = Field(..., description="GCS URI of the photo to generate a prompt for")
+    description: Optional[str] = Field(None, description="Optional description to guide prompt generation")
+
+
+class VideoPromptResponse(BaseModel):
+    """
+    Response model for the generated video prompt.
+    """
+    prompt: str = Field(..., description="The generated video prompt")
+    suggestions: List[str] = Field(default_factory=list, description="Optional list of suggestions to improve the prompt")

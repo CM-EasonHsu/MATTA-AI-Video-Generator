@@ -1,4 +1,5 @@
 import asyncpg
+import asyncio
 from app.config import settings
 import logging
 from google.cloud.sql.connector import Connector, IPTypes, create_async_connector
@@ -7,33 +8,6 @@ logger = logging.getLogger(__name__)
 
 pool: asyncpg.Pool | None = None
 connector: Connector | None = None
-
-
-async def get_db_connection() -> asyncpg.Connection:
-    """Gets a connection from the pool."""
-    global pool
-    if pool is None:
-        raise RuntimeError("Database pool not initialized or connection lost. Check logs.")
-    try:
-        conn = await pool.acquire()
-        return conn
-    except Exception as e:
-        logger.error(f"Error acquiring database connection from pool: {e}")
-        raise
-
-
-async def release_db_connection(conn: asyncpg.Connection):
-    """Releases a connection back to the pool."""
-    global pool
-    if pool is None:
-        logger.warning("Attempted to release connection but pool is None (already closed or never initialized).")
-        return  # Pool already closed or never initialized
-    try:
-        # Release the connection back to the asyncpg pool
-        await pool.release(conn)
-    except Exception as e:
-        # Log error but don't raise, as the app might be shutting down
-        logger.error(f"Error releasing database connection to pool: {e}")
 
 
 async def connect_db():
@@ -68,7 +42,7 @@ async def connect_db():
             )
 
         # Create the asyncpg connection pool using the connector
-        pool = await asyncpg.create_pool(settings.INSTANCE_CONNECTION_NAME, connect=getconn)
+        pool = await asyncpg.create_pool(settings.INSTANCE_CONNECTION_NAME, connect=getconn, min_size=1, max_size=5)
 
         logger.info("Database connection pool initialized successfully via Cloud SQL Connector.")
 
@@ -79,6 +53,33 @@ async def connect_db():
             await connector.close_async()
             connector = None
         raise  # Re-raise the exception to prevent app startup if DB fails
+
+
+async def get_db_connection() -> asyncpg.Connection:
+    """Gets a connection from the pool."""
+    global pool
+    if pool is None:
+        raise RuntimeError("Database pool not initialized or connection lost. Check logs.")
+    try:
+        conn = await pool.acquire()
+        return conn
+    except Exception as e:
+        logger.error(f"Error acquiring database connection from pool: {e}")
+        raise
+
+
+async def release_db_connection(conn: asyncpg.Connection):
+    """Releases a connection back to the pool."""
+    global pool
+    if pool is None:
+        logger.warning("Attempted to release connection but pool is None (already closed or never initialized).")
+        return  # Pool already closed or never initialized
+    try:
+        # Release the connection back to the asyncpg pool
+        await pool.release(conn)
+    except Exception as e:
+        # Log error but don't raise, as the app might be shutting down
+        logger.error(f"Error releasing database connection to pool: {e}")
 
 
 async def close_db():

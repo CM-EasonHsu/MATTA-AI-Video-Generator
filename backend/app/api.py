@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from app.routers import submissions, moderation
+from app.routers import submissions, moderation, generation
 from app.database import connect_db, close_db
 from app.config import settings  # Import settings to ensure it's loaded
 import uvicorn  # For running locally
@@ -59,7 +59,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # --- Routers ---
 app.include_router(submissions.router)
-app.include_router(moderation.router)  # Remember to secure this!
+app.include_router(moderation.router)
+app.include_router(generation.router)
 
 
 @app.get("/", tags=["Health Check"])

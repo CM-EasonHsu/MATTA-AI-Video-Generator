@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     gcs_bucket_name: str
     signed_url_expiration_seconds: int = 3600
     pub_sub_topic_id: str
+    CLOUD_RUN_SERVICE_URL: str
+    QUEUE_ID: str
 
     # Worker specific settings
     veo2_api_base_url: str = "https://veo2.googleapis.com"  # Default hypothetical

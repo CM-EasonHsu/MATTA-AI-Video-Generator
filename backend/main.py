@@ -118,7 +118,6 @@ async def process_submission(submission_id: uuid.UUID):
     logger.info(f"Starting processing for submission_id: {submission_id}")
 
     try:
-        await database.connect_db()
         conn = await database.get_db_connection()
 
         # 1. Fetch Submission Details & Check Status (Idempotency)
@@ -211,7 +210,7 @@ async def process_submission(submission_id: uuid.UUID):
 
 # --- Cloud Function Entry Point ---
 @functions_framework.cloud_event
-def entry_point(event: CloudEvent):
+async def entry_point(event: CloudEvent):
     """
     Cloud Function entry point triggered by Pub/Sub.
     Args:
@@ -244,13 +243,8 @@ def entry_point(event: CloudEvent):
             # Acknowledge the message - invalid format, no retry needed.
             return
 
-        # --- Database Pool Check (Lazy initialization via connect_db) ---
-        # Call connect_db to ensure pool is ready before processing
-        # This handles the potential cold start scenario where the pool isn't initialized yet.
-        # await database.connect_db()
-
         # 3. Run Core Processing Logic
-        asyncio.run(process_submission(submission_id))
+        await process_submission(submission_id)
 
         logger.info(f"Successfully completed processing for submission ID: {submission_id}")
         # Implicitly acknowledge the Pub/Sub message by returning normally
@@ -259,6 +253,4 @@ def entry_point(event: CloudEvent):
         logger.error(
             f"Processing failed for submission '{submission_id_str}'. Error Type: {type(e).__name__}. See previous logs for details."
         )
-        # Re-raise the exception to signal failure to Cloud Functions/PubSub
-        # This will cause the message to be retried according to the subscription's policy
         raise e

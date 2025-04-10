@@ -11,7 +11,7 @@ from typing import Optional
 from cloudevents.http import CloudEvent
 import functions_framework
 
-from app import crud, database, gcs, schemas, utils
+from app import crud, database, schemas
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

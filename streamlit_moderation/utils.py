@@ -66,22 +66,103 @@ def get_pending_items(item_type: str):
         return []
 
 
-def get_submissions_by_status(status: str):
-    """Fetches submissions based on their status."""
+# --- Updated Function ---
+def get_submissions_by_status(status: str, skip: int = 0, limit: int = 10):
+    """
+    Fetches a paginated list of submissions based on their status.
+
+    Args:
+        status (str): The status to filter submissions by.
+        skip (int): The number of submissions to skip (for pagination).
+        limit (int): The maximum number of submissions to return (page size).
+
+    Returns:
+        list: A list of submission dictionaries, or an empty list on error or if none found.
+    """
     endpoint = f"{BACKEND_API_URL}/submissions"
-    params = {"status": status}
+    params = {"status": status, "skip": skip, "limit": limit}
     try:
-        response = requests.get(endpoint, params=params, timeout=30)  # Increased timeout slightly
-        if response.status_code == 200:
-            return response.json()
-        elif response.status_code == 404 and status:  # Handle case where no items exist for a status
-            return []  # Return empty list, not an error
+        # Increased timeout slightly, adjust as needed
+        response = requests.get(endpoint, params=params, timeout=30)
+        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        return response.json()
+    except requests.exceptions.HTTPError as e:
+        # Handle 404 specifically: it means no items for this page/status, which isn't necessarily a server error
+        if e.response.status_code == 404:
+            # If skip > 0, it might just be an empty page beyond the last item.
+            # If skip == 0, it means no items exist for this status at all.
+            st.warning(f"No submissions found for status '{status}' on this page.")
+            return []
         else:
-            handle_api_error(response, f"Failed to fetch submissions with status '{status}'.")
+            handle_api_error(
+                e.response, f"Failed to fetch submissions for status '{status}' (page offset {skip}, limit {limit})."
+            )
             return []
     except requests.exceptions.RequestException as e:
         st.error(f"Network error fetching submissions for status '{status}': {e}")
         return []
+    except Exception as e:  # Catch other potential errors like JSONDecodeError
+        st.error(f"An unexpected error occurred while fetching submissions: {e}")
+        return []
+
+
+# --- New Function ---
+def get_submissions_count_by_status(status: str) -> int:
+    """
+    Fetches the total count of submissions for a given status.
+
+    Args:
+        status (str): The status to count submissions for.
+
+    Returns:
+        int: The total number of submissions, or 0 if none found or an error occurs.
+    """
+    # IMPORTANT: This assumes your backend has an endpoint like `/submissions/count`
+    # or that the main `/submissions` endpoint can return a count when limit=0,
+    # or includes the total count in its response headers or body along with items.
+    # Adjust the endpoint and logic based on your actual backend API design.
+
+    # --- Option 1: Dedicated Count Endpoint (Preferred) ---
+    # endpoint = f"{BACKEND_API_URL}/submissions/count"
+    # params = {"status": status}
+
+    # --- Option 2: Using main endpoint with limit=0 (If supported) ---
+    # endpoint = f"{BACKEND_API_URL}/submissions"
+    # params = {"status": status, "limit": 0} # Ask API just for count
+
+    # --- Option 3: Check response header/body from regular call (Adapt get_submissions_by_status if needed) ---
+    # This example assumes a dedicated count endpoint.
+    endpoint = f"{BACKEND_API_URL}/submissions/count"  # Replace with your actual count endpoint
+    params = {"status": status}
+
+    try:
+        response = requests.get(endpoint, params=params, timeout=15)
+        response.raise_for_status()
+        # Assuming the endpoint returns JSON like: {"count": 123}
+        data = response.json()
+        if isinstance(data, dict) and "count" in data and isinstance(data["count"], int):
+            return data["count"]
+        else:
+            # Fallback if response format is unexpected (e.g., just returns the number directly)
+            try:
+                return int(data)
+            except (ValueError, TypeError):
+                st.error(f"Unexpected format received from count endpoint for status '{status}': {data}")
+                return 0
+
+    except requests.exceptions.HTTPError as e:
+        # A 404 here likely means 0 items match the status
+        if e.response.status_code == 404:
+            return 0
+        else:
+            handle_api_error(e.response, f"Failed to fetch submission count for status '{status}'.")
+            return 0  # Return 0 on error to prevent pagination issues
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error fetching submission count for status '{status}': {e}")
+        return 0
+    except Exception as e:
+        st.error(f"An unexpected error occurred while fetching count: {e}")
+        return 0
 
 
 def moderate_item(item_type: str, submission_id: str, decision: str):
@@ -136,7 +217,7 @@ def confirm_rejection_dialog(item_type_singular: str, sub_id: str):
             st.rerun()
 
 
-def display_submission_item(item, active_status_filter=None):
+def display_submission_item(item, item_type="photo", include_approval=False, include_retry=False):
     """Renders a single submission item in a consistent format."""
     sub_id = item.get("id")
     sub_code = item.get("submission_code")
@@ -145,120 +226,84 @@ def display_submission_item(item, active_status_filter=None):
     created_at = item.get("created_at", "N/A")
     updated_at = item.get("updated_at", "N/A")
     prompt = item.get("user_prompt", "").strip()
-    current_status = item.get("status")  # Get the actual status from the item data
+    current_status = item.get("status")
 
-    # Determine item type based on status (heuristic, adjust if backend provides type explicitly)
-    item_type = (
-        "videos"
-        if "VIDEO" in current_status or "GENERATION" in current_status or current_status == STATUS_QUEUED_FOR_GENERATION
-        else "photos"
-    )
-    item_type_singular = "video" if item_type == "videos" else "photo"
+    if not photo_url:
+        return None
 
     with st.container(border=True):
-        # --- Item Header ---
-        st.markdown(f"**Submission ID:** `{sub_id}`")
-        if sub_code:
-            st.markdown(f"**Code:** `{sub_code}`")
-        st.markdown(f"**Status:** `{current_status}`")
-        st.markdown(f"**Submitted:** {created_at}")
-        if updated_at != created_at:  # Show updated time if different
-            st.markdown(f"**Last Updated:** {updated_at}")
+        col_1, col_2 = st.columns([1, 2])
+        # --- Photo Display ---
+        with col_1:
+            st.image(photo_url, caption=f"Prompt: {prompt}", use_container_width=True)
 
-        # --- User Prompt ---
-        if prompt:
-            with st.expander("📝 View User Prompt"):
-                st.text_area(
-                    "Prompt", prompt, height=100, key=f"prompt_{sub_id}", disabled=True
-                )  # Use text_area for better wrapping
-        else:
-            st.caption("No user prompt provided.")
+        # --- Metadata ---
+        with col_2:
+            st.markdown(f"**Submission ID:** `{sub_id}`")
+            if sub_code:
+                st.markdown(f"**Code:** `{sub_code}`")
+            # st.markdown(f"**Status:** `{current_status}`")
+            st.markdown(f"**Submitted:** {created_at}")
+            if updated_at != created_at:  # Show updated time if different
+                st.markdown(f"**Last Updated:** {updated_at}")
 
-        # --- Content Display ---
-        if item_type == "photos":
-            if photo_url:
-                st.image(photo_url, caption="Uploaded Photo", use_container_width=True)
-            else:
-                st.warning("⚠️ Photo URL missing.")
-        elif item_type == "videos":
-            # Display photo and video side-by-side if both exist
-            if photo_url and video_url:
-                col_media1, col_media2 = st.columns(2)
-                with col_media1:
-                    st.markdown("**Original Photo**")
-                    st.image(photo_url, use_container_width=True)
-                with col_media2:
-                    st.markdown("**Generated Video**")
-                    st.video(video_url)
-            # Display only photo if video doesn't exist (e.g., pending generation, failed)
-            elif photo_url:
-                st.markdown("**Original Photo**")
-                st.image(photo_url, caption="Photo for Video Generation", use_container_width=True)
-                if current_status not in [STATUS_PENDING_VIDEO_APPROVAL, STATUS_VIDEO_APPROVED, STATUS_VIDEO_REJECTED]:
-                    st.caption("(Video not available for current status)")
-            # Display only video if photo url is somehow missing but video exists
-            elif video_url:
-                st.markdown("**Generated Video**")
-                st.video(video_url)
-                st.warning("⚠️ Original Photo URL missing.")
-            else:
-                st.warning("⚠️ Neither Photo nor Video URL available.")
+        # --- Video ---
+        if video_url:
+            # st.markdown("**Generated Video**")
+            # st.divider()
+            st.video(video_url)
 
         # --- Action Buttons ---
-        action_key_prefix = f"{item_type}_{sub_id}"  # Unique key prefix
+        if include_approval:
+            action_key_prefix = f"{item_type}_{sub_id}"  # Unique key prefix
 
-        # --- Approval/Rejection Actions ---
-        if current_status in [STATUS_PENDING_PHOTO_APPROVAL, STATUS_PENDING_VIDEO_APPROVAL]:
-            cols_buttons = st.columns(2)
-            approve_label = f"✅ Approve {item_type_singular.capitalize()}"
-            reject_label = f"❌ Reject {item_type_singular.capitalize()}"
+            # --- Approval/Rejection Actions ---
+            if current_status in [STATUS_PENDING_PHOTO_APPROVAL, STATUS_PENDING_VIDEO_APPROVAL]:
+                cols_buttons = st.columns(2)
+                approve_label = f"✅ Approve {item_type.capitalize()}"
+                reject_label = f"❌ Reject {item_type.capitalize()}"
 
-            with cols_buttons[0]:
-                if st.button(
-                    approve_label, key=f"approve_{action_key_prefix}", type="primary", use_container_width=True
-                ):
-                    with st.spinner(f"Processing approval for {sub_id}..."):
-                        success = moderate_item(item_type, sub_id, "approve")
+                with cols_buttons[0]:
+                    if st.button(
+                        approve_label, key=f"approve_{action_key_prefix}", type="primary", use_container_width=True
+                    ):
+                        with st.spinner(f"Processing approval for {sub_id}..."):
+                            success = moderate_item(item_type, sub_id, "approve")
+                            if success:
+                                st.toast(f"Approved {sub_id}!", icon="✅")
+                                time.sleep(0.5)  # Allow toast to show
+                                st.rerun()  # Refresh the list
+
+                with cols_buttons[1]:
+                    if st.button(reject_label, key=f"reject_{action_key_prefix}", use_container_width=True):
+                        # Trigger the dialog
+                        confirm_rejection_dialog(item_type, sub_id)
+
+                    # Check if the confirmation came back for *this specific item*
+                    if (
+                        st.session_state.get("confirmed_rejection", False)
+                        and st.session_state.get("reject_sub_id") == sub_id
+                    ):
+                        with st.spinner(f"Processing rejection for {sub_id}..."):
+                            success = moderate_item(item_type, sub_id, "reject")
+                            if success:
+                                st.toast(f"Rejected {sub_id}!", icon="❌")
+                                time.sleep(0.5)
+                                # Clean up session state flags for this rejection
+                                st.session_state.confirmed_rejection = False
+                                st.session_state.reject_sub_id = None
+                                st.rerun()
+                            else:  # If API call fails, reset state to allow retry without re-confirm
+                                st.session_state.confirmed_rejection = False
+                                st.session_state.reject_sub_id = None
+                                # No rerun here, error is already shown by moderate_item
+
+            if include_retry:
+                # --- Retry Action ---
+                if st.button(f"🔄 Retry Generation", key=f"retry_{action_key_prefix}", use_container_width=True):
+                    with st.spinner(f"Requesting retry for {sub_id}..."):
+                        success = retry_generation(sub_id)
                         if success:
-                            st.toast(f"Approved {sub_id}!", icon="✅")
-                            time.sleep(0.5)  # Allow toast to show
-                            st.rerun()  # Refresh the list
-
-            with cols_buttons[1]:
-                if st.button(reject_label, key=f"reject_{action_key_prefix}", use_container_width=True):
-                    # Trigger the dialog
-                    confirm_rejection_dialog(item_type_singular, sub_id)
-
-                # Check if the confirmation came back for *this specific item*
-                if (
-                    st.session_state.get("confirmed_rejection", False)
-                    and st.session_state.get("reject_sub_id") == sub_id
-                ):
-                    with st.spinner(f"Processing rejection for {sub_id}..."):
-                        success = moderate_item(item_type, sub_id, "reject")
-                        if success:
-                            st.toast(f"Rejected {sub_id}!", icon="❌")
+                            st.toast(f"Retry requested for {sub_id}.", icon="🔄")
                             time.sleep(0.5)
-                            # Clean up session state flags for this rejection
-                            st.session_state.confirmed_rejection = False
-                            st.session_state.reject_sub_id = None
                             st.rerun()
-                        else:  # If API call fails, reset state to allow retry without re-confirm
-                            st.session_state.confirmed_rejection = False
-                            st.session_state.reject_sub_id = None
-                            # No rerun here, error is already shown by moderate_item
-
-        # --- Retry Action ---
-        elif current_status == STATUS_GENERATION_FAILED:
-            if st.button(f"🔄 Retry Generation", key=f"retry_{action_key_prefix}", use_container_width=True):
-                with st.spinner(f"Requesting retry for {sub_id}..."):
-                    success = retry_generation(sub_id)
-                    if success:
-                        st.toast(f"Retry requested for {sub_id}.", icon="🔄")
-                        time.sleep(0.5)
-                        st.rerun()
-
-        # No actions needed for other statuses (Approved, Rejected, Queued etc.)
-        # Add other actions here if needed in the future
-
-        st.markdown("---")  # Visual separator inside the container

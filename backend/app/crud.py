@@ -87,6 +87,20 @@ async def get_submissions_by_status(
         raise
 
 
+async def count_submissions_by_status(conn: asyncpg.Connection, statuses: List[SubmissionStatusEnum]) -> int:
+    """Counts submissions matching a list of statuses."""
+    try:
+        status_values = [s.value for s in statuses]
+        query = """
+            SELECT COUNT(*) FROM submissions
+            WHERE status = ANY($1::submission_status[])
+        """
+        return await conn.fetchval(query, status_values)
+    except Exception as e:
+        logger.error(f"Error fetching submissions by status {statuses}: {e}", exc_info=True)
+        raise
+
+
 async def update_submission_status(
     conn: asyncpg.Connection,
     submission_id: uuid.UUID,

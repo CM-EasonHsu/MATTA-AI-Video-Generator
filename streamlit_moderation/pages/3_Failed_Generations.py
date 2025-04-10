@@ -3,6 +3,7 @@ import streamlit as st
 from utils import get_submissions_by_status, display_submission_item, STATUS_GENERATION_FAILED, retry_generation
 import time
 
+st.set_page_config(page_title="Failed Generations", page_icon="🛡️", layout="centered")
 st.header("🛠️ Failed Video Generations")
 st.caption("View submissions where video generation failed and retry them.")
 
@@ -19,9 +20,7 @@ else:
     st.caption(f"Found {len(failed_items)} failed submission(s).")
     # Display items using the shared function - it will show the 'Retry' button
     for item in failed_items:
-        display_submission_item(item, active_status_filter=status_to_fetch)
+        display_submission_item(item, include_retry=True)
 
-    # Add a refresh button at the bottom
-    st.divider()
-    if st.button("🔄 Refresh List"):
+    if st.sidebar.button(":material/refresh: Refresh List", use_container_width=True):
         st.rerun()

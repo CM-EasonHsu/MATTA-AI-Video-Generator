@@ -69,9 +69,26 @@ async def create_submission(
         await photo.close()  # Ensure file handle is closed
 
 
+@router.get("/submissions/count/", tags=["Submissions"], summary="Count submissions by status")
+async def count_submissions_by_status(
+    status: schemas.SubmissionStatusEnum = Query(..., description="Filter submissions by this status"),
+    conn: Connection = Depends(database.get_db),
+):
+    """
+    Counts the number of submissions filtered by the provided status.
+    """
+    # Fetch count from the database using the new CRUD function
+    count = await crud.count_submissions_by_status(conn, [status])
+
+    if count is None:
+        raise HTTPException(status_code=404, detail="No submissions found for this status.")
+
+    return {"status": status.value, "count": count}
+
+
 @router.get(
     "/submissions/",
-    response_model=list[schemas.SubmissionStatusResponse],  # Returns a list
+    response_model=list[schemas.SubmissionDetail],  # Returns a list
     tags=["Submissions"],
     summary="List submissions by status",
 )
@@ -92,30 +109,29 @@ async def list_submissions_by_status(
     # Pass status.value to get the string representation for the DB query
     db_submissions = await crud.get_submissions_by_status(conn, [status], skip, limit)
 
-    response_list: list[schemas.SubmissionStatusResponse] = []
-    for submission in db_submissions:
+    response_list: list[schemas.SubmissionDetail] = []
+    for sub in db_submissions:
+        photo_url = await gcs.generate_signed_url(sub["uploaded_photo_gcs_path"])
         video_url = None
-        # Generate signed URL only if the status matches VIDEO_APPROVED
-        # Check using the string value fetched from DB before casting
-        if submission["status"] == schemas.SubmissionStatusEnum.VIDEO_APPROVED.value:
-            if submission["generated_video_gcs_path"]:
-                video_url = await gcs.generate_signed_url(submission["generated_video_gcs_path"])
-                if not video_url:
-                    logger.warning(
-                        f"Could not generate signed URL for approved video: {submission['generated_video_gcs_path']} (Submission: {submission['submission_code']})"
-                    )
-            else:
-                logger.warning(f"Approved video GCS path is missing for submission: {submission['submission_code']}")
+        if sub["generated_video_gcs_path"]:
+            video_url = await gcs.generate_signed_url(sub["generated_video_gcs_path"])
+            if not video_url:
+                logger.warning(
+                    f"Could not generate signed URL for approved video: {sub['generated_video_gcs_path']} (Submission: {sub['submission_code']})"
+                )
 
         # Construct the response object for each submission
         response_list.append(
-            schemas.SubmissionStatusResponse(
-                submission_code=submission["submission_code"],
-                status=schemas.SubmissionStatusEnum(submission["status"]),  # Cast DB string to Enum
+            schemas.SubmissionDetail(
+                id=sub["id"],
+                submission_code=sub["submission_code"],
+                status=schemas.SubmissionStatusEnum(sub["status"]),
+                user_prompt=sub["user_prompt"],
+                photo_url=photo_url,
                 video_url=video_url,
-                error_message=submission["error_message"],
-                created_at=submission["created_at"],
-                updated_at=submission["updated_at"],
+                error_message=sub["error_message"],
+                created_at=sub["created_at"],
+                updated_at=sub["updated_at"],
             )
         )
 

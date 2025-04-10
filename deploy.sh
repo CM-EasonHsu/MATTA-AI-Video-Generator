@@ -32,6 +32,7 @@ export CLOUD_RUN_SERVICE_NAME="videogen-backend-api"
 
 # Pub/Sub
 export PUB_SUB_TOPIC_ID="approved-submissions"
+export QUEUE_ID="videogen-queue"
 
 # Cloud Function
 export CLOUD_FUNCTION_NAME="videogen-worker"
@@ -110,6 +111,7 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   cloudresourcemanager.googleapis.com \
   eventarc.googleapis.com \
+  cloudtasks.googleapis.com
   --project="${PROJECT_ID}"
 echo "APIs enabled."
 
@@ -279,6 +281,10 @@ log "Creating Pub/Sub topic ${PUB_SUB_TOPIC_ID}..."
 # Use || true to prevent script exit if topic already exists
 gcloud pubsub topics create "${PUB_SUB_TOPIC_ID}" --project="${PROJECT_ID}" --quiet || true
 echo "Pub/Sub topic ${PUB_SUB_TOPIC_ID} ensured."
+
+# --- Create Cloud Tasks queue ---
+gcloud tasks queues create "${QUEUE_ID}" --project="${PROJECT_ID}" --location="${REGION}" --quiet || true
+echo "Cloud Tasks queue ${QUEUE_ID} ensured."
 
 
 # --- Deploy Cloud Run Service (Backend API) ---

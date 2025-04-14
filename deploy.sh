@@ -246,12 +246,6 @@ gcloud secrets add-iam-policy-binding "${VEO2_API_KEY_SECRET_NAME}" \
   --project="${PROJECT_ID}" \
   --condition=None --quiet
 
-# Grant Pub/Sub Publisher role
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/pubsub.publisher" \
-  --condition=None --quiet
-
 # Grant Storage Object User role
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SA_EMAIL}" \
@@ -276,12 +270,6 @@ gcloud iam service-accounts add-iam-policy-binding \
 echo "Core IAM permissions granted."
 
 
-# --- Create Pub/Sub Topic ---
-log "Creating Pub/Sub topic ${PUB_SUB_TOPIC_ID}..."
-# Use || true to prevent script exit if topic already exists
-gcloud pubsub topics create "${PUB_SUB_TOPIC_ID}" --project="${PROJECT_ID}" --quiet || true
-echo "Pub/Sub topic ${PUB_SUB_TOPIC_ID} ensured."
-
 # --- Create Cloud Tasks queue ---
 gcloud tasks queues create "${QUEUE_ID}" --project="${PROJECT_ID}" --location="${REGION}" --quiet || true
 echo "Cloud Tasks queue ${QUEUE_ID} ensured."
@@ -296,46 +284,17 @@ gcloud run deploy "${CLOUD_RUN_SERVICE_NAME}" \
   --service-account="${SA_EMAIL}" \
   --allow-unauthenticated `# Adjust if authentication is needed` \
   --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}" \
-  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest,VEO2_API_KEY=${VEO2_API_KEY_SECRET_NAME}:latest" \
+  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest" \
   --env-vars-file=env.yaml \
-  --memory=512Mi \
+  --memory=1Gi \
   --cpu=1 \
+  --min-instances=1 \
+  --max-instances=10 \
   --project="${PROJECT_ID}" \
   --quiet # Add --quiet for less verbose output during deployment
 
 BACKEND_URL=$(gcloud run services describe "${CLOUD_RUN_SERVICE_NAME}" --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')
 echo "Cloud Run service deployed. URL: ${BACKEND_URL}"
-
-
-# --- Deploy Cloud Function (Worker) ---
-log "Deploying Cloud Function ${CLOUD_FUNCTION_NAME}..."
-# Deployment implicitly uses Cloud Build
-# Note: --add-cloudsql-instances is not directly supported for --trigger-topic on deploy for Gen2.
-# It needs to be added via 'gcloud run services update' afterwards.
-gcloud functions deploy "${CLOUD_FUNCTION_NAME}" \
-  --gen2 \
-  --region="${REGION}" \
-  --runtime=python311 `# Update runtime if needed` \
-  --source=./backend \
-  --entry-point=entry_point `# Change if your entry point is different` \
-  --trigger-topic="${PUB_SUB_TOPIC_ID}" \
-  --service-account="${SA_EMAIL}" \
-  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest,VEO2_API_KEY=${VEO2_API_KEY_SECRET_NAME}:latest" \
-  --env-vars-file=env.yaml `# Read env vars from yaml` \
-  --timeout=540s \
-  --project="${PROJECT_ID}" \
-  --quiet # Add --quiet for less verbose output during deployment
-echo "Cloud Function deployment initiated."
-
-log "Adding Cloud SQL connection to Cloud Function's underlying service..."
-# Gen2 Functions run on Cloud Run, update the underlying service
-# This command targets the *service* created for the function, which has the same name.
-gcloud run services update "${CLOUD_FUNCTION_NAME}" \
-  --region="${REGION}" \
-  --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}" \
-  --project="${PROJECT_ID}" \
-  --quiet
-echo "Cloud SQL connection added to function's service."
 
 
 log "Deployment script finished successfully!"
@@ -352,8 +311,10 @@ gcloud run deploy streamlit-submission \
   --allow-unauthenticated `# Adjust if authentication is needed` \
   --set-env-vars="BACKEND_API_URL=${BACKEND_URL}" \
   --port=8501 \
-  --memory=512Mi \
+  --memory=1Gi \
   --cpu=1 \
+  --min-instances=1 \
+  --max-instances=10 \
   --project="${PROJECT_ID}" \
   --quiet # Add --quiet for less verbose output during deployment
 
@@ -370,8 +331,10 @@ gcloud run deploy streamlit-moderation \
   --allow-unauthenticated `# Adjust if authentication is needed` \
   --set-env-vars="BACKEND_API_URL=${BACKEND_URL}" \
   --port=8501 \
-  --memory=512Mi \
+  --memory=1Gi \
   --cpu=1 \
+  --min-instances=1 \
+  --max-instances=10 \
   --project="${PROJECT_ID}" \
   --quiet # Add --quiet for less verbose output during deployment
 

@@ -69,7 +69,7 @@ async def create_submission(
         await photo.close()  # Ensure file handle is closed
 
 
-@router.get("/submissions/count/", tags=["Submissions"], summary="Count submissions by status")
+@router.get("/submissions/stats/count/", tags=["Submissions"], summary="Count submissions by status")
 async def count_submissions_by_status(
     status: schemas.SubmissionStatusEnum = Query(..., description="Filter submissions by this status"),
     conn: Connection = Depends(database.get_db),
@@ -88,7 +88,7 @@ async def count_submissions_by_status(
 
 @router.get(
     "/submissions/",
-    response_model=list[schemas.SubmissionDetail],  # Returns a list
+    response_model=list[schemas.SubmissionDetail],
     tags=["Submissions"],
     summary="List submissions by status",
 )
@@ -98,15 +98,13 @@ async def list_submissions_by_status(
     ),  # Use Query for query param
     conn: Connection = Depends(database.get_db),
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records to return"),
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of records to return"),
 ):
     """
     Retrieves a list of submissions filtered by the provided status.
     Includes pagination using skip and limit parameters.
     If a submission's video is approved, it includes a signed URL to view it.
     """
-    # Fetch submissions from the database using the new CRUD function
-    # Pass status.value to get the string representation for the DB query
     db_submissions = await crud.get_submissions_by_status(conn, [status], skip, limit)
 
     response_list: list[schemas.SubmissionDetail] = []
@@ -139,34 +137,36 @@ async def list_submissions_by_status(
 
 
 @router.get(
-    "/submissions/{submission_code}/status",
-    response_model=schemas.SubmissionStatusResponse,
+    "/submissions/{submission_code}",
+    response_model=schemas.SubmissionDetail,
     tags=["Submissions"],
     summary="Check the status of a submission",
 )
-async def get_submission_status(submission_code: str, conn: Connection = Depends(database.get_db)):
+async def get_submission(submission_code: str, conn: Connection = Depends(database.get_db)):
     """
-    Retrieves the status of a submission by its code.
-    If the video is approved, it includes a signed URL to view it.
+    Retrieves the submission by its code.
     """
-    submission = await crud.get_submission_by_code(conn, submission_code)
-    if not submission:
+    sub = await crud.get_submission_by_code(conn, submission_code)
+    if not sub:
         raise HTTPException(status_code=404, detail="Submission not found.")
 
+    photo_url = await gcs.generate_signed_url(sub["uploaded_photo_gcs_path"])
     video_url = None
-    if submission["status"] == schemas.SubmissionStatusEnum.VIDEO_APPROVED.value:
-        video_url = await gcs.generate_signed_url(submission["generated_video_gcs_path"])
+    if sub["generated_video_gcs_path"]:
+        video_url = await gcs.generate_signed_url(sub["generated_video_gcs_path"])
         if not video_url:
-            # Log warning but don't fail the request, just indicate URL is unavailable
             logger.warning(
-                f"Could not generate signed URL for approved video: {submission['generated_video_gcs_path']}"
+                f"Could not generate signed URL for approved video: {sub['generated_video_gcs_path']} (Submission: {sub['submission_code']})"
             )
 
-    return schemas.SubmissionStatusResponse(
-        submission_code=submission["submission_code"],
-        status=schemas.SubmissionStatusEnum(submission["status"]),  # Cast to Enum
+    return schemas.SubmissionDetail(
+        id=sub["id"],
+        submission_code=sub["submission_code"],
+        status=schemas.SubmissionStatusEnum(sub["status"]),
+        user_prompt=sub["user_prompt"],
+        photo_url=photo_url,
         video_url=video_url,
-        error_message=submission["error_message"],
-        created_at=submission["created_at"],
-        updated_at=submission["updated_at"],
+        error_message=sub["error_message"],
+        created_at=sub["created_at"],
+        updated_at=sub["updated_at"],
     )

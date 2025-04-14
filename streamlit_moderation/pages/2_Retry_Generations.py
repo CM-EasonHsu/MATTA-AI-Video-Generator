@@ -1,6 +1,6 @@
 # pages/3_Failed_Generations.py
 import streamlit as st
-from utils import get_submissions_by_status, display_submission_item, STATUS_GENERATION_FAILED, retry_generation
+from utils import get_submissions_by_status, display_submission_item, STATUS_GENERATION_FAILED
 import time
 
 st.set_page_config(page_title="Failed Generations", page_icon="🛡️", layout="centered")

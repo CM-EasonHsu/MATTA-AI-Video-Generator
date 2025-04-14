@@ -51,7 +51,7 @@ def check_status(submission_code: str):
         st.warning("Please enter a submission code.")
         return None
     try:
-        response = requests.get(f"{BACKEND_API_URL}/submissions/{submission_code}/status", timeout=15)
+        response = requests.get(f"{BACKEND_API_URL}/submissions/{submission_code}", timeout=15)
         if response.status_code == 200:
             return response.json()
         elif response.status_code == 404:
@@ -72,14 +72,12 @@ STATUS_PHOTO_REJECTED = "PHOTO_REJECTED"
 STATUS_VIDEO_REJECTED = "VIDEO_REJECTED"
 STATUS_PENDING_PHOTO_APPROVAL = "PENDING_PHOTO_APPROVAL"
 STATUS_PHOTO_APPROVED = "PHOTO_APPROVED"
-STATUS_QUEUED_FOR_GENERATION = "QUEUED_FOR_GENERATION"
 STATUS_GENERATING_VIDEO = "GENERATING_VIDEO"
 STATUS_PENDING_VIDEO_APPROVAL = "PENDING_VIDEO_APPROVAL"
 
 PROCESSING_STATUSES = [
     STATUS_PENDING_PHOTO_APPROVAL,
     STATUS_PHOTO_APPROVED,
-    STATUS_QUEUED_FOR_GENERATION,
     STATUS_GENERATING_VIDEO,
     STATUS_PENDING_VIDEO_APPROVAL,
 ]

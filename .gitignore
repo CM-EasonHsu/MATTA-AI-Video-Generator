@@ -26,6 +26,7 @@ var/
 # 虛擬環境
 venv/
 ENV/
+.venv/
 
 # Streamlit
 .streamlit/

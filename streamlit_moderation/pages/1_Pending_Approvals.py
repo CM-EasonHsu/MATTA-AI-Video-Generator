@@ -52,7 +52,6 @@ else:
     st.caption(f"Found {len(pending_items)} item(s) awaiting moderation.")
     # Display items using the shared function
     for item in pending_items:
-        # Pass the status explicitly for context if needed, though display_submission_item gets it from item data
         display_submission_item(item, item_type, include_approval=True)
 
     # Add a refresh button at the bottom

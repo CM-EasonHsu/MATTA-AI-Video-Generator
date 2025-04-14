@@ -25,18 +25,15 @@ class Settings(BaseSettings):
 
     gcs_bucket_name: str
     signed_url_expiration_seconds: int = 3600
-    pub_sub_topic_id: str
     CLOUD_RUN_SERVICE_URL: str
     QUEUE_ID: str
 
-    # Worker specific settings
-    veo2_api_base_url: str = "https://veo2.googleapis.com"  # Default hypothetical
-    veo2_api_key: str = None
-    polling_interval_seconds: int = 15
-    max_polling_attempts: int = 80
-    veo2_initiate_timeout_seconds: int = 30
-    veo2_poll_timeout_seconds: int = 30
-    veo2_prompt_timeout_seconds: int = 30
+    # VEO2 specific settings
+    veo2_model_name: str = "veo-2.0-generate-001"
+    veo2_video_duration: int = 5
+    veo2_max_retries: int = 2
+    veo2_aspect_ratio: str = "16:9"
+    veo2_polling_interval: int = 15
 
     class Config:
         # If using .env file, pydantic-settings will load it automatically
@@ -47,14 +44,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-# Add a check for the API key
-if not settings.veo2_api_key:
-    logger.warning("VEO2_API_KEY is not set. Veo2 API calls will likely fail.")
-    # You might want to raise an error if the key is essential for the worker
-
-
-# Ensure credentials are set if running locally without implicit auth
-# if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS") and not os.getenv("FUNCTIONS_SIGNATURE_TYPE"): # FUNCTIONS_SIGNATURE_TYPE implies Cloud Functions env
-#     # In a real app, you might raise an error or handle based on environment
-#     print("Warning: GOOGLE_APPLICATION_CREDENTIALS not set. GCS operations might fail if not in a GCP environment.")

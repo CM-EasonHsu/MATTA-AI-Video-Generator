@@ -16,7 +16,6 @@ if not BACKEND_API_URL:
 STATUS_PENDING_PHOTO_APPROVAL = "PENDING_PHOTO_APPROVAL"
 STATUS_PHOTO_APPROVED = "PHOTO_APPROVED"
 STATUS_PHOTO_REJECTED = "PHOTO_REJECTED"
-STATUS_QUEUED_FOR_GENERATION = "QUEUED_FOR_GENERATION"
 STATUS_GENERATING_VIDEO = "GENERATING_VIDEO"
 STATUS_GENERATION_FAILED = "GENERATION_FAILED"
 STATUS_PENDING_VIDEO_APPROVAL = "PENDING_VIDEO_APPROVAL"
@@ -27,7 +26,6 @@ ALL_STATUSES = [
     STATUS_PENDING_PHOTO_APPROVAL,
     STATUS_PHOTO_APPROVED,
     STATUS_PHOTO_REJECTED,
-    STATUS_QUEUED_FOR_GENERATION,
     STATUS_GENERATING_VIDEO,
     STATUS_GENERATION_FAILED,
     STATUS_PENDING_VIDEO_APPROVAL,
@@ -51,22 +49,21 @@ def handle_api_error(response, default_message="API Error"):
         st.error(f"Error: {response.status_code} - {response.text[:200]}")
 
 
-def get_pending_items(item_type: str):
-    """Fetches pending photos or videos for moderation."""
-    endpoint = f"{BACKEND_API_URL}/moderation/pending_{item_type}"
+def get_submission_by_code(submission_code: str):
+    """Fetches a submission by its user-facing code."""
+    endpoint = f"{BACKEND_API_URL}/submissions/{submission_code}"
     try:
         response = requests.get(endpoint, timeout=20)
         if response.status_code == 200:
             return response.json()
         else:
-            handle_api_error(response, f"Failed to fetch pending {item_type}.")
-            return []
+            handle_api_error(response, f"Failed to fetch submission by code {submission_code}.")
+            return None
     except requests.exceptions.RequestException as e:
-        st.error(f"Network error fetching pending {item_type}: {e}")
-        return []
+        st.error(f"Network error fetching submission by code {submission_code}: {e}")
+        return None
 
 
-# --- Updated Function ---
 def get_submissions_by_status(status: str, skip: int = 0, limit: int = 10):
     """
     Fetches a paginated list of submissions based on their status.
@@ -106,7 +103,6 @@ def get_submissions_by_status(status: str, skip: int = 0, limit: int = 10):
         return []
 
 
-# --- New Function ---
 def get_submissions_count_by_status(status: str) -> int:
     """
     Fetches the total count of submissions for a given status.
@@ -117,22 +113,7 @@ def get_submissions_count_by_status(status: str) -> int:
     Returns:
         int: The total number of submissions, or 0 if none found or an error occurs.
     """
-    # IMPORTANT: This assumes your backend has an endpoint like `/submissions/count`
-    # or that the main `/submissions` endpoint can return a count when limit=0,
-    # or includes the total count in its response headers or body along with items.
-    # Adjust the endpoint and logic based on your actual backend API design.
-
-    # --- Option 1: Dedicated Count Endpoint (Preferred) ---
-    # endpoint = f"{BACKEND_API_URL}/submissions/count"
-    # params = {"status": status}
-
-    # --- Option 2: Using main endpoint with limit=0 (If supported) ---
-    # endpoint = f"{BACKEND_API_URL}/submissions"
-    # params = {"status": status, "limit": 0} # Ask API just for count
-
-    # --- Option 3: Check response header/body from regular call (Adapt get_submissions_by_status if needed) ---
-    # This example assumes a dedicated count endpoint.
-    endpoint = f"{BACKEND_API_URL}/submissions/count"  # Replace with your actual count endpoint
+    endpoint = f"{BACKEND_API_URL}/submissions/stats/count"  # Replace with your actual count endpoint
     params = {"status": status}
 
     try:
@@ -182,22 +163,6 @@ def moderate_item(item_type: str, submission_id: str, decision: str):
         return False
 
 
-def retry_generation(submission_id: str):
-    """Sends a request to retry video generation for a failed submission."""
-    endpoint = f"{BACKEND_API_URL}/moderation/retry_generation/{submission_id}"
-    try:
-        response = requests.post(endpoint, timeout=15)
-        if response.status_code == 200:  # Assuming 200 OK for retry success
-            st.success(f"Retrying generation for submission {submission_id}.")
-            return True
-        else:
-            handle_api_error(response, f"Failed to retry generation for {submission_id}.")
-            return False
-    except requests.exceptions.RequestException as e:
-        st.error(f"Network error retrying generation for {submission_id}: {e}")
-        return False
-
-
 @st.dialog("Confirm Rejection")
 def confirm_rejection_dialog(item_type_singular: str, sub_id: str):
     """Displays a confirmation dialog before rejecting an item."""
@@ -242,7 +207,7 @@ def display_submission_item(item, item_type="photo", include_approval=False, inc
             st.markdown(f"**Submission ID:** `{sub_id}`")
             if sub_code:
                 st.markdown(f"**Code:** `{sub_code}`")
-            # st.markdown(f"**Status:** `{current_status}`")
+            st.markdown(f"**Status:** `{current_status}`")
             st.markdown(f"**Submitted:** {created_at}")
             if updated_at != created_at:  # Show updated time if different
                 st.markdown(f"**Last Updated:** {updated_at}")
@@ -253,7 +218,7 @@ def display_submission_item(item, item_type="photo", include_approval=False, inc
             # st.divider()
             st.video(video_url)
 
-        # --- Action Buttons ---
+        # --- Approval Buttons ---
         if include_approval:
             action_key_prefix = f"{item_type}_{sub_id}"  # Unique key prefix
 
@@ -298,12 +263,15 @@ def display_submission_item(item, item_type="photo", include_approval=False, inc
                                 st.session_state.reject_sub_id = None
                                 # No rerun here, error is already shown by moderate_item
 
-            if include_retry:
-                # --- Retry Action ---
-                if st.button(f"🔄 Retry Generation", key=f"retry_{action_key_prefix}", use_container_width=True):
-                    with st.spinner(f"Requesting retry for {sub_id}..."):
-                        success = retry_generation(sub_id)
-                        if success:
-                            st.toast(f"Retry requested for {sub_id}.", icon="🔄")
-                            time.sleep(0.5)
-                            st.rerun()
+        # --- Retry Action ---
+        if include_retry:
+            action_key_prefix = f"{item_type}_{sub_id}"  # Unique key prefix
+            if st.button(
+                f":material/replay: Retry", key=f"retry_{action_key_prefix}", use_container_width=True, type="primary"
+            ):
+                with st.spinner(f"Requesting retry for {sub_id}..."):
+                    success = moderate_item(item_type="photo", submission_id=sub_id, decision="approve")
+                    if success:
+                        st.toast(f"Retry requested for {sub_id}.", icon="🔄")
+                        time.sleep(0.5)
+                        st.rerun()

@@ -26,6 +26,3 @@ Welcome to the Moderation Console. Use the sidebar navigation to:
 )
 
 st.sidebar.success("Select a moderation task above.")
-
-# You can add more dashboard elements or summaries here if needed.
-st.info(f"Connected to Backend API: `{BACKEND_API_URL}`")

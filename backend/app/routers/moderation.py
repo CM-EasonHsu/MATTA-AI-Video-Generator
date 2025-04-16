@@ -31,6 +31,7 @@ def create_video_generation_task(submission_id: uuid.UUID):
         http_request=tasks_v2.HttpRequest(
             http_method=tasks_v2.HttpMethod.POST,
             url=target_url,
+            headers={"X-API-Key": settings.api_key},
             oidc_token=tasks_v2.OidcToken(
                 service_account_email=settings.SERVICE_ACCOUNT_EMAIL,
                 audience=settings.CLOUD_RUN_SERVICE_URL,
@@ -62,7 +63,7 @@ async def moderate_photo(
         raise HTTPException(status_code=404, detail="Submission not found.")
 
     if action.decision == schemas.ModerationDecisionEnum.APPROVE:
-        new_status = schemas.SubmissionStatusEnum.PHOTO_APPROVED  # Or QUEUED_FOR_GENERATION
+        new_status = schemas.SubmissionStatusEnum.PHOTO_APPROVED
         updated = await crud.update_submission_status(conn, submission_id, new_status, set_photo_moderated=True)
         if updated:
             logger.info(f"Photo approved for submission {submission_id}. Triggering video generation (placeholder).")
@@ -81,7 +82,10 @@ async def moderate_photo(
 
     elif action.decision == schemas.ModerationDecisionEnum.REJECT:
         new_status = schemas.SubmissionStatusEnum.PHOTO_REJECTED
-        updated = await crud.update_submission_status(conn, submission_id, new_status, set_photo_moderated=True)
+        reason = action.reason
+        updated = await crud.update_submission_status(
+            conn, submission_id, new_status, comment=reason, set_photo_moderated=True
+        )
         if updated:
             logger.info(f"Photo rejected for submission {submission_id}.")
         else:
@@ -89,6 +93,47 @@ async def moderate_photo(
     else:
         # Should not happen with Enum validation, but good practice
         raise HTTPException(status_code=400, detail="Invalid moderation action.")
+
+    return  # Return 204 No Content on success
+
+
+@router.post(
+    "/photo/{submission_id}/retry",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Retry video generation for a submitted photo",
+)
+async def retry_photo(
+    submission_id: uuid.UUID, request: schemas.RetryRequest = Body(...), conn: Connection = Depends(database.get_db)
+):
+    """Retry video generation with a new prompt."""
+    submission = await crud.get_submission_by_id(conn, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+
+    # Update prompt
+    prompt = request.prompt
+    if prompt != submission["user_prompt"]:
+        updated = await crud.update_submission_prompt(conn, submission_id, prompt)
+        if updated:
+            logger.info(f"Prompt updated for submission {submission_id}.")
+
+    # Update status to PHOTO_APPROVED
+    new_status = schemas.SubmissionStatusEnum.PHOTO_APPROVED
+    updated = await crud.update_submission_status(conn, submission_id, new_status, set_photo_moderated=True)
+    if updated:
+        logger.info(f"Photo approved for submission {submission_id}. Triggering video generation (placeholder).")
+
+        try:
+            # Create a Cloud Task to trigger the video generation endpoint
+            task_name = create_video_generation_task(submission_id)
+            logger.info(f"Successfully created Cloud Task {task_name} for submission {submission_id}.")
+
+        except Exception as e:
+            logger.exception(f"Failed to create Cloud Task for submission {submission_id}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to trigger video generation.")
+        pass
+    else:
+        raise HTTPException(status_code=500, detail="Failed to update submission status.")
 
     return  # Return 204 No Content on success
 
@@ -121,7 +166,10 @@ async def moderate_video(
 
     elif action.decision == schemas.ModerationDecisionEnum.REJECT:
         new_status = schemas.SubmissionStatusEnum.VIDEO_REJECTED
-        updated = await crud.update_submission_status(conn, submission_id, new_status, set_video_moderated=True)
+        reason = action.reason
+        updated = await crud.update_submission_status(
+            conn, submission_id, new_status, comment=reason, set_video_moderated=True
+        )
         if updated:
             logger.info(f"Video rejected for submission {submission_id}.")
         else:

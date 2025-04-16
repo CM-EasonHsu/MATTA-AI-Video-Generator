@@ -4,13 +4,15 @@ import requests
 import os
 import time
 
+from datetime import datetime
+from pytz import timezone
+
 # --- Configuration ---
 # Get the backend API URL from environment variable set in docker-compose.yml
 # Provide a default for local running outside docker if needed
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
-if not BACKEND_API_URL:
-    st.error("CRITICAL ERROR: BACKEND_API_URL environment variable not set.")
-    st.stop()  # Stop execution if the backend URL isn't configured
+API_KEY = os.getenv("BACKEND_API_KEY")
+headers = {"X-API-KEY": API_KEY}
 
 # --- Constants for Statuses ---
 STATUS_PENDING_PHOTO_APPROVAL = "PENDING_PHOTO_APPROVAL"
@@ -53,7 +55,7 @@ def get_submission_by_code(submission_code: str):
     """Fetches a submission by its user-facing code."""
     endpoint = f"{BACKEND_API_URL}/submissions/{submission_code}"
     try:
-        response = requests.get(endpoint, timeout=20)
+        response = requests.get(endpoint, timeout=20, headers=headers)
         if response.status_code == 200:
             return response.json()
         else:
@@ -80,7 +82,7 @@ def get_submissions_by_status(status: str, skip: int = 0, limit: int = 10):
     params = {"status": status, "skip": skip, "limit": limit}
     try:
         # Increased timeout slightly, adjust as needed
-        response = requests.get(endpoint, params=params, timeout=30)
+        response = requests.get(endpoint, params=params, timeout=30, headers=headers)
         response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
         return response.json()
     except requests.exceptions.HTTPError as e:
@@ -117,7 +119,7 @@ def get_submissions_count_by_status(status: str) -> int:
     params = {"status": status}
 
     try:
-        response = requests.get(endpoint, params=params, timeout=15)
+        response = requests.get(endpoint, params=params, timeout=15, headers=headers)
         response.raise_for_status()
         # Assuming the endpoint returns JSON like: {"count": 123}
         data = response.json()
@@ -146,12 +148,12 @@ def get_submissions_count_by_status(status: str) -> int:
         return 0
 
 
-def moderate_item(item_type: str, submission_id: str, decision: str):
+def moderate_item(item_type: str, submission_id: str, decision: str, reason=None):
     """Sends moderation decision (approve/reject) to the backend."""
     endpoint = f"{BACKEND_API_URL}/moderation/{item_type}/{submission_id}/action"
-    payload = {"decision": decision}  # "approve" or "reject"
+    payload = {"decision": decision, "reason": reason}  # "approve" or "reject"
     try:
-        response = requests.post(endpoint, json=payload, timeout=15)
+        response = requests.post(endpoint, json=payload, timeout=15, headers=headers)
         if response.status_code == 204:  # No Content Success
             st.success(f"Submission {submission_id} successfully {decision}d.")
             return True
@@ -163,15 +165,32 @@ def moderate_item(item_type: str, submission_id: str, decision: str):
         return False
 
 
+def retry_item(submission_id: str, new_prompt: str):
+    """Sends retry request to the backend."""
+    endpoint = f"{BACKEND_API_URL}/moderation/photo/{submission_id}/retry"
+    payload = {"prompt": new_prompt}
+    try:
+        response = requests.post(endpoint, json=payload, timeout=15, headers=headers)
+        if response.status_code == 204:  # No Content Success
+            st.success(f"Submission {submission_id} successfully retried.")
+            return True
+        else:
+            handle_api_error(response, f"Failed to retry submission {submission_id}.")
+            return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error retrying {submission_id}: {e}")
+        return False
+
+
 @st.dialog("Confirm Rejection")
 def confirm_rejection_dialog(item_type_singular: str, sub_id: str):
     """Displays a confirmation dialog before rejecting an item."""
     st.warning(f"⚠️ Are you sure you want to reject this {item_type_singular} (Submission ID: `{sub_id}`)?")
     st.markdown("This action will mark the submission as rejected and may not be easily undone.")
-
+    reason = st.text_input("Reason for rejection:", key="rejection_reason")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Yes, Confirm Rejection", type="primary", use_container_width=True):
+        if st.button("Yes, Confirm Rejection", type="primary", use_container_width=True, disabled=not reason):
             st.session_state.confirmed_rejection = True
             st.session_state.reject_sub_id = sub_id  # Store which ID is being rejected
             st.rerun()
@@ -186,10 +205,16 @@ def display_submission_item(item, item_type="photo", include_approval=False, inc
     """Renders a single submission item in a consistent format."""
     sub_id = item.get("id")
     sub_code = item.get("submission_code")
+    user_name = item.get("user_name", "N/A")
+    email = item.get("email", "N/A")
     photo_url = item.get("photo_url")
     video_url = item.get("video_url")
-    created_at = item.get("created_at", "N/A")
-    updated_at = item.get("updated_at", "N/A")
+    created_at = item.get("created_at")
+    if created_at:
+        created_at = (
+            datetime.fromisoformat(created_at).astimezone(timezone("Asia/Singapore")).strftime("%Y-%m-%d %H:%M:%S")
+        )
+
     prompt = item.get("user_prompt", "").strip()
     current_status = item.get("status")
 
@@ -204,13 +229,12 @@ def display_submission_item(item, item_type="photo", include_approval=False, inc
 
         # --- Metadata ---
         with col_2:
-            st.markdown(f"**Submission ID:** `{sub_id}`")
-            if sub_code:
-                st.markdown(f"**Code:** `{sub_code}`")
+            # st.markdown(f"**Submission ID:** `{sub_id}`")
+            st.markdown(f"**Code:** `{sub_code}`")
+            st.markdown(f"**Name:** {user_name}")
+            st.markdown(f"**Email:** {email}")
             st.markdown(f"**Status:** `{current_status}`")
             st.markdown(f"**Submitted:** {created_at}")
-            if updated_at != created_at:  # Show updated time if different
-                st.markdown(f"**Last Updated:** {updated_at}")
 
         # --- Video ---
         if video_url:
@@ -250,27 +274,32 @@ def display_submission_item(item, item_type="photo", include_approval=False, inc
                         and st.session_state.get("reject_sub_id") == sub_id
                     ):
                         with st.spinner(f"Processing rejection for {sub_id}..."):
-                            success = moderate_item(item_type, sub_id, "reject")
+                            success = moderate_item(
+                                item_type, sub_id, "reject", reason=st.session_state.get("rejection_reason")
+                            )
                             if success:
                                 st.toast(f"Rejected {sub_id}!", icon="❌")
                                 time.sleep(0.5)
                                 # Clean up session state flags for this rejection
                                 st.session_state.confirmed_rejection = False
                                 st.session_state.reject_sub_id = None
+                                st.session_state.rejection_reason = None
                                 st.rerun()
                             else:  # If API call fails, reset state to allow retry without re-confirm
                                 st.session_state.confirmed_rejection = False
                                 st.session_state.reject_sub_id = None
+                                st.session_state.rejection_reason = None
                                 # No rerun here, error is already shown by moderate_item
 
         # --- Retry Action ---
         if include_retry:
             action_key_prefix = f"{item_type}_{sub_id}"  # Unique key prefix
+            new_prompt = st.text_input("Retry with a different prompt:", value=prompt, key=f"edit_{action_key_prefix}")
             if st.button(
                 f":material/replay: Retry", key=f"retry_{action_key_prefix}", use_container_width=True, type="primary"
             ):
                 with st.spinner(f"Requesting retry for {sub_id}..."):
-                    success = moderate_item(item_type="photo", submission_id=sub_id, decision="approve")
+                    success = retry_item(submission_id=sub_id, new_prompt=new_prompt)
                     if success:
                         st.toast(f"Retry requested for {sub_id}.", icon="🔄")
                         time.sleep(0.5)

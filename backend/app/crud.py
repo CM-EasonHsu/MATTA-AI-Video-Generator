@@ -12,19 +12,23 @@ async def create_submission(
     conn: asyncpg.Connection,
     code: str,
     photo_gcs_path: str,
+    user_name: str,
+    email: str,
     prompt: Optional[str] = None,
 ) -> uuid.UUID:
     """Creates a new submission record."""
     try:
         query = """
-            INSERT INTO submissions (submission_code, uploaded_photo_gcs_path, user_prompt, status)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO submissions (submission_code, uploaded_photo_gcs_path, user_name, email, user_prompt, status)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id;
         """
         result = await conn.fetchrow(
             query,
             code,
             photo_gcs_path,
+            user_name,
+            email,
             prompt,
             SubmissionStatusEnum.PENDING_PHOTO_APPROVAL.value,
         )
@@ -59,16 +63,23 @@ async def get_submission_by_id(conn: asyncpg.Connection, submission_id: uuid.UUI
 
 
 async def get_submissions_by_status(
-    conn: asyncpg.Connection, statuses: List[SubmissionStatusEnum], skip: int = 0, limit: int = 50
+    conn: asyncpg.Connection, statuses: List[SubmissionStatusEnum], skip: int = 0, limit: int = 50, desc: bool = False
 ) -> List[asyncpg.Record]:
     """Fetches submissions matching a list of statuses."""
     try:
         status_values = [s.value for s in statuses]
-        query = """
-            SELECT * FROM submissions
-            WHERE status = ANY($1::submission_status[])
-            ORDER BY created_at ASC
-        """
+        if desc:
+            query = """
+                SELECT * FROM submissions
+                WHERE status = ANY($1::submission_status[])
+                ORDER BY created_at DESC
+            """
+        else:
+            query = """
+                SELECT * FROM submissions
+                WHERE status = ANY($1::submission_status[])
+                ORDER BY created_at ASC
+            """
         # Append LIMIT and OFFSET
         params = [status_values]
         if limit is not None:
@@ -105,6 +116,7 @@ async def update_submission_status(
     conn: asyncpg.Connection,
     submission_id: uuid.UUID,
     new_status: SubmissionStatusEnum,
+    comment: Optional[str] = None,
     video_gcs_path: Optional[str] = None,
     error_message: Optional[str] = None,
     set_photo_moderated: bool = False,
@@ -114,6 +126,7 @@ async def update_submission_status(
     try:
         fields_to_update = {
             "status": new_status.value,
+            "comment": comment,
             "error_message": error_message,
             "updated_at": datetime.now(timezone.utc),  # Explicitly set here, DB trigger also works
         }
@@ -155,4 +168,41 @@ async def update_submission_status(
         return updated
     except Exception as e:
         logger.error(f"Error updating submission {submission_id} status to {new_status.value}: {e}", exc_info=True)
+        raise
+
+
+async def update_submission_prompt(
+    conn: asyncpg.Connection,
+    submission_id: uuid.UUID,
+    new_prompt: str,
+) -> bool:
+    """Updates the prompt of a submission.
+
+    Args:
+        conn: Database connection
+        submission_id: UUID of the submission to update
+        new_prompt: New prompt text to set
+
+    Returns:
+        bool: True if the update was successful, False if no submission was found
+    """
+    try:
+        query = """
+            UPDATE submissions
+            SET user_prompt = $1, updated_at = $2
+            WHERE id = $3;
+        """
+        result = await conn.execute(query, new_prompt, datetime.now(timezone.utc), submission_id)
+
+        # Check if any row was updated
+        updated = result == "UPDATE 1"
+        if updated:
+            logger.info(f"Updated prompt for submission {submission_id}")
+        else:
+            logger.warning(
+                f"Attempted to update prompt for submission {submission_id} but no rows were affected (might not exist?)."
+            )
+        return updated
+    except Exception as e:
+        logger.error(f"Error updating prompt for submission {submission_id}: {e}", exc_info=True)
         raise

@@ -1,13 +1,21 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Query
-from app import schemas, crud, gcs, utils, database
-from asyncpg import Connection
 import io
-import mimetypes  # For getting content type
+import mimetypes
+import re
+
+from asyncpg import Connection
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Query
 from typing import Optional
+
+from app import schemas, crud, gcs, utils, database
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def is_valid_email_regex(email):
+    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    return re.match(pattern, email) is not None
 
 
 @router.post(
@@ -19,6 +27,8 @@ router = APIRouter()
 )
 async def create_submission(
     photo: UploadFile = File(..., description="Photo file to upload (e.g., JPEG, PNG)"),
+    user_name: str = Form(..., description="Name of the user"),
+    email: str = Form(None, description="Email address for notifications"),
     user_prompt: Optional[str] = Form(None, description="Optional text prompt for video generation"),
     conn: Connection = Depends(database.get_db),
 ):
@@ -34,10 +44,12 @@ async def create_submission(
 
     # Validate content type (basic check)
     content_type = photo.content_type
-    if content_type not in ["image/jpeg", "image/png", "image/gif", "image/webp"]:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid file type: {content_type}. Only JPEG, PNG, GIF, WEBP allowed."
-        )
+    if content_type not in ["image/jpeg", "image/png", "image/heic"]:
+        raise HTTPException(status_code=400, detail=f"Invalid file type: {content_type}. Only JPEG, PNG, HEIC allowed.")
+
+    # Validate email format if provided
+    if not is_valid_email_regex(email):
+        raise HTTPException(status_code=400, detail="Invalid email format.")
 
     submission_code = utils.generate_submission_code()
     file_extension = utils.get_file_extension(photo.filename, content_type)
@@ -52,7 +64,7 @@ async def create_submission(
         photo_gcs_path = await gcs.upload_to_gcs(file_stream, destination_blob_name, content_type)
 
         # Create DB record (use await with async crud function)
-        await crud.create_submission(conn, submission_code, photo_gcs_path, user_prompt)
+        await crud.create_submission(conn, submission_code, photo_gcs_path, user_name, email, user_prompt)
 
         return schemas.SubmissionCreateResponse(
             submission_code=submission_code, status=schemas.SubmissionStatusEnum.PENDING_PHOTO_APPROVAL
@@ -99,13 +111,14 @@ async def list_submissions_by_status(
     conn: Connection = Depends(database.get_db),
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
     limit: int = Query(10, ge=1, le=50, description="Maximum number of records to return"),
+    desc: Optional[bool] = Query(False, description="Sort results in descending order (latest first)"),
 ):
     """
     Retrieves a list of submissions filtered by the provided status.
     Includes pagination using skip and limit parameters.
     If a submission's video is approved, it includes a signed URL to view it.
     """
-    db_submissions = await crud.get_submissions_by_status(conn, [status], skip, limit)
+    db_submissions = await crud.get_submissions_by_status(conn, [status], skip, limit, desc)
 
     response_list: list[schemas.SubmissionDetail] = []
     for sub in db_submissions:
@@ -124,10 +137,13 @@ async def list_submissions_by_status(
                 id=sub["id"],
                 submission_code=sub["submission_code"],
                 status=schemas.SubmissionStatusEnum(sub["status"]),
+                user_name=sub["user_name"],
+                email=sub["email"],
                 user_prompt=sub["user_prompt"],
                 photo_url=photo_url,
                 video_url=video_url,
                 error_message=sub["error_message"],
+                comment=sub["comment"],
                 created_at=sub["created_at"],
                 updated_at=sub["updated_at"],
             )
@@ -163,10 +179,13 @@ async def get_submission(submission_code: str, conn: Connection = Depends(databa
         id=sub["id"],
         submission_code=sub["submission_code"],
         status=schemas.SubmissionStatusEnum(sub["status"]),
+        user_name=sub["user_name"],
+        email=sub["email"],
         user_prompt=sub["user_prompt"],
         photo_url=photo_url,
         video_url=video_url,
         error_message=sub["error_message"],
+        comment=sub["comment"],
         created_at=sub["created_at"],
         updated_at=sub["updated_at"],
     )

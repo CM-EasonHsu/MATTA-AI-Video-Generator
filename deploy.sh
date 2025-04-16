@@ -25,23 +25,16 @@ export GCS_BUCKET_NAME="matta-videogen-storage"
 
 # Secret Manager
 export DB_PASS_SECRET_NAME="videogen-db-password"
-export VEO2_API_KEY_SECRET_NAME="videogen-veo2-api-key"
 
 # Cloud Run
 export CLOUD_RUN_SERVICE_NAME="videogen-backend-api"
 
-# Pub/Sub
-export PUB_SUB_TOPIC_ID="approved-submissions"
+# Cloud Tasks Queue
 export QUEUE_ID="videogen-queue"
-
-# Cloud Function
-export CLOUD_FUNCTION_NAME="videogen-worker"
 
 # Service account
 export SA_NAME="videogen-sa"
 
-# VEO2 API Key
-export VEO2_API_KEY="veo2_api_key"
 # --- End Configuration ---
 
 # --- Derived Variables ---
@@ -189,13 +182,6 @@ gcloud secrets create "${DB_PASS_SECRET_NAME}" \
     --quiet || true
 echo "Secret ${DB_PASS_SECRET_NAME} ensured."
 
-log "Creating secret ${VEO2_API_KEY_SECRET_NAME} in Secret Manager..."
-# Use || true to prevent script exit if secret already exists
-gcloud secrets create "${VEO2_API_KEY_SECRET_NAME}" \
-    --replication-policy=automatic \
-    --project="${PROJECT_ID}" \
-    --quiet || true
-echo "Secret ${VEO2_API_KEY_SECRET_NAME} ensured."
 
 log "Adding database password as secret version..."
 # Add the password to the secret
@@ -203,14 +189,6 @@ echo -n "${DB_PASSWORD}" | gcloud secrets versions add "${DB_PASS_SECRET_NAME}" 
 
 # Clear the password variable from the environment immediately after use
 unset DB_PASSWORD
-echo "Password stored in Secret Manager and variable unset."
-
-log "Adding Veo2 API key as secret version..."
-# Add the password to the secret
-echo -n "${VEO2_API_KEY}" | gcloud secrets versions add "${VEO2_API_KEY_SECRET_NAME}" --data-file=- --project="${PROJECT_ID}"
-
-# Clear the password variable from the environment immediately after use
-unset VEO2_API_KEY
 echo "Password stored in Secret Manager and variable unset."
 
 
@@ -278,19 +256,19 @@ echo "Cloud Tasks queue ${QUEUE_ID} ensured."
 # --- Deploy Cloud Run Service (Backend API) ---
 log "Deploying Cloud Run service ${CLOUD_RUN_SERVICE_NAME}..."
 # Deployment implicitly uses Cloud Build
-gcloud run deploy "${CLOUD_RUN_SERVICE_NAME}" \
+gcloud run deploy "videogen-backend-api" \
   --source=./backend \
-  --region="${REGION}" \
-  --service-account="${SA_EMAIL}" \
+  --region="asia-southeast1" \
+  --service-account="videogen-sa@matta2024-malaysiaairlines.iam.gserviceaccount.com" \
   --allow-unauthenticated `# Adjust if authentication is needed` \
-  --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}" \
-  --set-secrets="DB_PASS=${DB_PASS_SECRET_NAME}:latest" \
+  --add-cloudsql-instances="matta2024-malaysiaairlines:asia-southeast1:videogen-postgres" \
+  --set-secrets="DB_PASS=videogen-db-password:latest,API_KEY=videogen-api-key:latest" \
   --env-vars-file=env.yaml \
-  --memory=1Gi \
-  --cpu=1 \
+  --memory=2Gi \
+  --cpu=2 \
   --min-instances=1 \
   --max-instances=10 \
-  --project="${PROJECT_ID}" \
+  --project="matta2024-malaysiaairlines" \
   --quiet # Add --quiet for less verbose output during deployment
 
 BACKEND_URL=$(gcloud run services describe "${CLOUD_RUN_SERVICE_NAME}" --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')
@@ -310,9 +288,10 @@ gcloud run deploy streamlit-submission \
   --service-account="${SA_EMAIL}" \
   --allow-unauthenticated `# Adjust if authentication is needed` \
   --set-env-vars="BACKEND_API_URL=${BACKEND_URL}" \
+  --set-secrets="BACKEND_API_KEY=videogen-api-key:latest" \
   --port=8501 \
-  --memory=1Gi \
-  --cpu=1 \
+  --memory=2Gi \
+  --cpu=2 \
   --min-instances=1 \
   --max-instances=10 \
   --project="${PROJECT_ID}" \
@@ -330,6 +309,7 @@ gcloud run deploy streamlit-moderation \
   --service-account="${SA_EMAIL}" \
   --allow-unauthenticated `# Adjust if authentication is needed` \
   --set-env-vars="BACKEND_API_URL=${BACKEND_URL}" \
+  --set-secrets="BACKEND_API_KEY=videogen-api-key:latest,APP_PASSWORD=videogen-moderator-password:latest" \
   --port=8501 \
   --memory=1Gi \
   --cpu=1 \
@@ -340,3 +320,7 @@ gcloud run deploy streamlit-moderation \
 
 MODERATION_URL=$(gcloud run services describe streamlit-moderation --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')
 echo "Cloud Run service deployed. URL: ${MODERATION_URL}"
+
+gcloud beta run services update streamlit-moderation \
+--region=asia-southeast1 \
+--iap

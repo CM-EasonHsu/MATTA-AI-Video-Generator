@@ -27,24 +27,17 @@ class SubmissionCreateResponse(BaseModel):
     message: str = "Submission received successfully."
 
 
-class SubmissionStatusResponse(BaseModel):
-    submission_code: str
-    status: SubmissionStatusEnum
-    video_url: Optional[str] = None  # Signed URL if approved
-    error_message: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-
-
-# For Moderator views
 class SubmissionDetail(BaseModel):
     id: uuid.UUID
     submission_code: str
     status: SubmissionStatusEnum
+    user_name: Optional[str] = None
+    email: Optional[str] = None
     user_prompt: Optional[str] = None
     photo_url: Optional[str] = None  # Signed URL
     video_url: Optional[str] = None  # Signed URL
     error_message: Optional[str] = None
+    comment: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -59,6 +52,11 @@ class ModerationDecisionEnum(str, Enum):
 
 class ModerationAction(BaseModel):
     decision: ModerationDecisionEnum
+    reason: Optional[str] = Field(None, description="Reason for the moderation decision")
+
+
+class RetryRequest(BaseModel):
+    prompt: str
 
 
 class VideoPromptRequest(BaseModel):

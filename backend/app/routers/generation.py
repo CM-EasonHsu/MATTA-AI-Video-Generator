@@ -62,7 +62,7 @@ async def veo2_generate_video(photo_uri: str, prompt: Optional[str] = None) -> s
             logger.info(operation)
 
         if operation.error:
-            return {"status": "FAILED", "error": operation.error.message}
+            return {"status": "FAILED", "error": operation.error["message"]}
 
         elif operation.response:
             logger.info(f"Veo2 job succeeded: {operation.response}")

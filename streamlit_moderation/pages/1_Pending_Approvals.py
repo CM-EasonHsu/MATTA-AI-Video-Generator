@@ -9,6 +9,11 @@ from utils import (
 import time
 
 st.set_page_config(page_title="Pending Approvals", page_icon="🛡️", layout="centered")
+
+# Check if user is logged in
+if "logged_in" not in st.session_state or not st.session_state.logged_in:
+    st.switch_page("Moderation_App.py")
+
 st.header("✅ Pending Approvals")
 st.caption("Review uploaded photos or generated videos awaiting your decision.")
 

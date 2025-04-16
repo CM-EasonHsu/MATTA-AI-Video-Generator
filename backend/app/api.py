@@ -1,20 +1,37 @@
 import logging
-from fastapi import FastAPI, Request, status
+import uvicorn
+
+from fastapi import FastAPI, Depends, Request, status, HTTPException, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.security.api_key import APIKeyHeader
+from starlette.status import HTTP_403_FORBIDDEN
+
 from app.routers import submissions, moderation, generation
 from app.database import connect_db, close_db
-from app.config import settings  # Import settings to ensure it's loaded
-import uvicorn  # For running locally
+from app.config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
+API_KEY = settings.api_key
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+
+def get_api_key(api_key: str = Security(api_key_header)):
+    if api_key == API_KEY:
+        return api_key
+    raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Could not validate API KEY")
+
+
 app = FastAPI(
     title="AI Video Generator Backend",
     description="API service to handle photo submissions, video generation tracking, and moderation.",
     version="0.1.0",
+    dependencies=[Depends(get_api_key)],
 )
 
 

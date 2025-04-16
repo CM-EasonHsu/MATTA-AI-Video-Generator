@@ -11,6 +11,8 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
+    api_key: str
+
     GOOGLE_CLOUD_PROJECT: str
     GOOGLE_CLOUD_REGION: str
     SERVICE_ACCOUNT_EMAIL: str

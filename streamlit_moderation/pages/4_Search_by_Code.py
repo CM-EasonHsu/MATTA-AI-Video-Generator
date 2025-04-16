@@ -5,6 +5,11 @@ from utils import get_submission_by_code, display_submission_item
 
 st.set_page_config(page_title="Search by Code", page_icon="🔍", layout="centered")
 
+# Check if user is logged in
+if "logged_in" not in st.session_state or not st.session_state.logged_in:
+    st.switch_page("Moderation_App.py")
+
+
 st.header("🔎 Search by Submission Code")
 st.caption("Find a specific submission by entering its unique code.")
 

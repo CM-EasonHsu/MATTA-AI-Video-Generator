@@ -4,6 +4,11 @@ from utils import get_submissions_by_status, display_submission_item, STATUS_GEN
 import time
 
 st.set_page_config(page_title="Failed Generations", page_icon="🛡️", layout="centered")
+
+# Check if user is logged in
+if "logged_in" not in st.session_state or not st.session_state.logged_in:
+    st.switch_page("Moderation_App.py")
+
 st.header("🛠️ Failed Video Generations")
 st.caption("View submissions where video generation failed and retry them.")
 

@@ -12,6 +12,11 @@ import math
 
 st.set_page_config(page_title="View by Status", page_icon="🛡️", layout="centered")
 
+# Check if user is logged in
+if "logged_in" not in st.session_state or not st.session_state.logged_in:
+    st.switch_page("Moderation_App.py")
+
+
 st.header("📊 View Submissions by Status")
 st.caption("Browse submissions based on their current processing status.")
 

@@ -261,19 +261,19 @@ def render_user_page():
                         if video_url:
                             st.video(video_url)
                         else:
-                            st.warning("Video URL is missing, although status is approved. Please contact support.")
+                            st.warning("Video URL is missing. Please try again with another photo.")
                     elif status == STATUS_GENERATION_FAILED:
                         st.error(
-                            f"❌ **Failed:** Video generation encountered an error. Please try again or reach out to support team."
+                            f"❌ **Failed:** Video generation encountered an error. Please try again with another photo."
                         )
                     elif status in [STATUS_PHOTO_REJECTED, STATUS_VIDEO_REJECTED]:
                         if status_info.get("comment"):
                             st.error(
-                                f"🚫 **Rejected:** Your submission could not be processed ({status}). Reason: {status_info.get('comment')}. Please try again or reach out to support team."
+                                f"🚫 **Rejected:** Your submission could not be processed ({status}). Reason: {status_info.get('comment')}. Please try again with another photo."
                             )
                         else:
                             st.error(
-                                f"🚫 **Rejected:** Your submission could not be processed ({status}). This might be due to content policy or technical issues. Please try again or reach out to support team."
+                                f"🚫 **Rejected:** Your submission could not be processed ({status}). This might be due to content policy or technical issues. Please try again with another photo."
                             )
                     elif status in PROCESSING_STATUSES:
                         st.info(
@@ -281,7 +281,7 @@ def render_user_page():
                         )
                     else:
                         st.warning(
-                            f"❓ **Unknown Status:** Received status '{status}'. Please check again later or contact support if this persists."
+                            f"❓ **Unknown Status:** Received status '{status}'. Please check again later or try again with another photo."
                         )
                 elif status_info is None:
                     st.error(f"❌ Code `{code_to_check}` not found. Please check the code and try again.")

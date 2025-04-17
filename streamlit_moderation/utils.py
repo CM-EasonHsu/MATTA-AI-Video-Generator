@@ -187,7 +187,12 @@ def confirm_rejection_dialog(item_type_singular: str, sub_id: str):
     """Displays a confirmation dialog before rejecting an item."""
     st.warning(f"⚠️ Are you sure you want to reject this {item_type_singular} (Submission ID: `{sub_id}`)?")
     st.markdown("This action will mark the submission as rejected and may not be easily undone.")
-    reason = st.text_input("Reason for rejection:", key="rejection_reason")
+    reason_options = [
+        "Video generation encountered an error",
+        "Children detected in the photo",
+        "Inappropriate prompt submitted",
+    ]
+    reason = st.radio("Select a reason for rejection:", options=reason_options, key="rejection_reason")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Yes, Confirm Rejection", type="primary", use_container_width=True, disabled=not reason):
@@ -283,13 +288,10 @@ def display_submission_item(item, item_type="photo", include_approval=False, inc
                                 # Clean up session state flags for this rejection
                                 st.session_state.confirmed_rejection = False
                                 st.session_state.reject_sub_id = None
-                                st.session_state.rejection_reason = None
                                 st.rerun()
                             else:  # If API call fails, reset state to allow retry without re-confirm
                                 st.session_state.confirmed_rejection = False
                                 st.session_state.reject_sub_id = None
-                                st.session_state.rejection_reason = None
-                                # No rerun here, error is already shown by moderate_item
 
         # --- Retry Action ---
         if include_retry:
